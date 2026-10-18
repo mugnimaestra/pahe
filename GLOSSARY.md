@@ -55,3 +55,7 @@ _Avoid_: collection, vault
 **Base URL**:
 The animepahe origin pahe talks to, default `https://animepahe.pw`, configurable to survive domain changes.
 _Avoid_: host, site URL
+
+**Poisoned resolver**:
+A resolver that answers with an address that does not belong to the requested host, detected by a certificate mismatch when connecting to the Base URL.
+_Avoid_: DNS hijack, block page
