@@ -673,8 +673,8 @@ mod tests {
                     recorded.lock().unwrap().push(head.clone());
                     let get = head.starts_with("get ");
                     eprintln!(
-                        "serve: raw={:?} get={get} forbid={} drop={:?} range={} declared={:?}",
-                        String::from_utf8_lossy(&buffer),
+                        "serve: {} get={get} forbid={} drop={:?} range={} declared={:?}",
+                        head.lines().next().unwrap_or_default().trim(),
                         plan.forbid,
                         plan.drop_after,
                         plan.honor_range,
@@ -728,6 +728,12 @@ mod tests {
                     };
 
                     let wrote = socket.write_all(&response).await;
+                    // A truncated body ends at the FIN. Give the client a moment
+                    // to read the partial chunk first: closing in the same tick
+                    // lets a coalesced EOF discard those bytes on Linux.
+                    if plan.drop_after.is_some() {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
                     let shut = socket.shutdown().await;
                     eprintln!(
                         "serve: sent={} write={:?} shutdown={:?}",
