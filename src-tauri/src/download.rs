@@ -672,6 +672,14 @@ mod tests {
                     let head = String::from_utf8_lossy(&buffer[..head_end]).to_ascii_lowercase();
                     recorded.lock().unwrap().push(head.clone());
                     let get = head.starts_with("get ");
+                    eprintln!(
+                        "serve: raw={:?} get={get} forbid={} drop={:?} range={} declared={:?}",
+                        String::from_utf8_lossy(&buffer),
+                        plan.forbid,
+                        plan.drop_after,
+                        plan.honor_range,
+                        plan.declared
+                    );
 
                     let response = if plan.forbid {
                         b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
@@ -719,8 +727,14 @@ mod tests {
                         response
                     };
 
-                    let _ = socket.write_all(&response).await;
-                    let _ = socket.shutdown().await;
+                    let wrote = socket.write_all(&response).await;
+                    let shut = socket.shutdown().await;
+                    eprintln!(
+                        "serve: sent={} write={:?} shutdown={:?}",
+                        response.len(),
+                        wrote.map_err(|error| error.to_string()),
+                        shut.map_err(|error| error.to_string())
+                    );
                 });
             }
         });
@@ -865,7 +879,10 @@ mod tests {
             std::fs::read(folder.join("AnimePahe_One_-_04_1080p_ADN.mp4.part"))
                 .unwrap()
                 .len(),
-            100
+            100,
+            "error={:?} requests={:?}",
+            job.error,
+            server.requests.lock().unwrap()
         );
     }
 
@@ -1046,7 +1063,10 @@ mod tests {
             std::fs::read(folder.join(format!("{name}.part")))
                 .unwrap()
                 .len(),
-            900
+            900,
+            "error={:?} requests={:?}",
+            failed.error,
+            dropped.requests.lock().unwrap()
         );
 
         let fixed = serve(
