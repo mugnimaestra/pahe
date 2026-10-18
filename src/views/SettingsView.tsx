@@ -1,10 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ipc } from "../ipc/client";
+import { ipc, type Settings } from "../ipc/client";
 import { messageOf } from "../message";
 
 export default function SettingsView() {
-  const [loaded, setLoaded] = useState(false);
-  const [baseUrl, setBaseUrl] = useState("");
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{
     kind: "saved" | "error";
@@ -16,10 +15,8 @@ export default function SettingsView() {
 
     ipc
       .getSettings()
-      .then((settings) => {
-        if (!active) return;
-        setBaseUrl(settings.baseUrl);
-        setLoaded(true);
+      .then((loaded) => {
+        if (active) setSettings(loaded);
       })
       .catch((error) => {
         if (!active) return;
@@ -33,12 +30,14 @@ export default function SettingsView() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!settings) return;
+
     setSaving(true);
     setStatus(null);
 
     try {
-      const saved = await ipc.saveSettings({ baseUrl });
-      setBaseUrl(saved.baseUrl);
+      const saved = await ipc.saveSettings(settings);
+      setSettings(saved);
       setStatus({ kind: "saved", message: "Settings saved." });
     } catch (error) {
       setStatus({ kind: "error", message: messageOf(error) });
@@ -51,7 +50,7 @@ export default function SettingsView() {
     <section className="view view-settings">
       <h1>Settings</h1>
 
-      {!loaded ? (
+      {!settings ? (
         status ? (
           <p role="alert">{status.message}</p>
         ) : (
@@ -64,8 +63,13 @@ export default function SettingsView() {
             id="base-url"
             type="url"
             required
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.currentTarget.value)}
+            value={settings.baseUrl}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                baseUrl: event.currentTarget.value,
+              })
+            }
           />
           <p className="muted">
             The animepahe origin pahe talks to. Default: https://animepahe.pw

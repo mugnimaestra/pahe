@@ -8,6 +8,8 @@ vi.mock("./ipc/client", () => ({
     saveSettings: vi.fn(),
     searchAnime: vi.fn(),
     fetchPoster: vi.fn(),
+    loadLibrary: vi.fn(),
+    enrichLibrary: vi.fn(),
     onResolverStatus: vi.fn(),
   },
 }));
@@ -16,12 +18,18 @@ import App from "./App";
 import { ipc } from "./ipc/client";
 
 const mocked = vi.mocked(ipc);
+const SETTINGS = {
+  baseUrl: "https://animepahe.pw",
+  libraryFolder: "/Users/me/Downloads/animepahe",
+};
 
 describe("app shell", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mocked.getSettings.mockResolvedValue({ baseUrl: "https://animepahe.pw" });
+    mocked.getSettings.mockResolvedValue(SETTINGS);
     mocked.onResolverStatus.mockResolvedValue(() => {});
+    mocked.loadLibrary.mockResolvedValue([]);
+    mocked.enrichLibrary.mockResolvedValue([]);
   });
 
   it("renders the navigation between the main views", () => {
@@ -32,6 +40,17 @@ describe("app shell", () => {
       expect(nav.textContent).toContain(label);
     }
     expect(screen.getByRole("heading", { name: "Search" })).toBeTruthy();
+  });
+
+  it("switches to the library view", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Library" }));
+
+    expect(screen.getByRole("heading", { name: "Library" })).toBeTruthy();
+    expect(await screen.findByText("No Episodes in the Library yet."))
+      .toBeTruthy();
+    expect(mocked.loadLibrary).toHaveBeenCalled();
   });
 
   it("switches to the settings view", () => {
@@ -52,7 +71,7 @@ describe("app shell", () => {
   });
 
   it("saves an edited base url through the IPC client", async () => {
-    mocked.saveSettings.mockResolvedValue({ baseUrl: "https://mirror.example" });
+    mocked.saveSettings.mockResolvedValue(SETTINGS);
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
@@ -63,6 +82,7 @@ describe("app shell", () => {
     await waitFor(() =>
       expect(mocked.saveSettings).toHaveBeenCalledWith({
         baseUrl: "https://mirror.example",
+        libraryFolder: "/Users/me/Downloads/animepahe",
       }),
     );
     expect((await screen.findByRole("status")).textContent).toBe(

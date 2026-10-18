@@ -1,9 +1,13 @@
+mod library;
 mod poster;
 mod probe;
 mod proxy;
 mod resolver;
 mod settings;
 
+use std::path::{Path, PathBuf};
+
+use library::{Library, LibraryAnime};
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
 use tauri::Manager;
@@ -58,6 +62,36 @@ async fn fetch_poster(
     result
 }
 
+#[tauri::command]
+async fn load_library(
+    store: tauri::State<'_, Store>,
+    library: tauri::State<'_, Library>,
+) -> Result<Vec<LibraryAnime>, String> {
+    library.refresh(Path::new(&store.get().library_folder))
+}
+
+#[tauri::command]
+async fn enrich_library(
+    store: tauri::State<'_, Store>,
+    library: tauri::State<'_, Library>,
+    resolver: tauri::State<'_, Resolver>,
+) -> Result<Vec<LibraryAnime>, String> {
+    let base_url = store.get().base_url;
+    let resolver = resolver.inner();
+
+    library
+        .enrich(|query| {
+            let base_url = base_url.clone();
+            async move {
+                resolver
+                    .search(&base_url, &query)
+                    .await
+                    .map_err(|failure| failure.message)
+            }
+        })
+        .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -75,8 +109,28 @@ pub fn run() {
 
     builder
         .setup(|app| {
-            app.manage(Store::load(app.path().app_data_dir()?));
+            let app_data_dir = app.path().app_data_dir()?;
+            let library_folder = app
+                .path()
+                .download_dir()
+                .or_else(|_| app.path().home_dir().map(|home| home.join("Downloads")))
+                .map(|downloads| downloads.join("animepahe"))
+                .unwrap_or_else(|_| PathBuf::from("animepahe"));
+
+            app.manage(Store::load(app_data_dir.clone(), library_folder));
             app.manage(Resolver::new(app.handle().clone()));
+            app.manage(Library::open(app_data_dir.join(library::INDEX_FILE)));
+
+            // The scan is local and fast; enrichment waits until the Library
+            // view asks for it so startup never depends on the network.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let folder = handle.state::<Store>().get().library_folder;
+                if let Err(error) = handle.state::<Library>().refresh(Path::new(&folder)) {
+                    eprintln!("library scan: {error}");
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -84,7 +138,9 @@ pub fn run() {
             save_settings,
             search_anime,
             load_anime,
-            fetch_poster
+            fetch_poster,
+            load_library,
+            enrich_library
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");

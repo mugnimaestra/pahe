@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export interface Settings {
   baseUrl: string;
+  libraryFolder: string;
 }
 
 export interface SearchResult {
@@ -32,6 +33,13 @@ export interface AnimeDetail {
   episodes: Episode[];
 }
 
+export interface LibraryAnime {
+  animeId: string | null;
+  title: string;
+  poster: string | null;
+  episodeCount: number;
+}
+
 export type ResolverPhase = "idle" | "challenge";
 
 export interface ResolverStatus {
@@ -52,6 +60,12 @@ export const ipc = {
   /** Returns a data URL for the poster, or rejects when it cannot be fetched. */
   fetchPoster: (url: string): Promise<string> =>
     invoke<string>("fetch_poster", { url }),
+  /** Scans the Library folder and returns its Animes. Rejects when unreadable. */
+  loadLibrary: (): Promise<LibraryAnime[]> =>
+    invoke<LibraryAnime[]>("load_library"),
+  /** Caches Anime metadata for Library items; rejects only when the index cannot be saved. */
+  enrichLibrary: (): Promise<LibraryAnime[]> =>
+    invoke<LibraryAnime[]>("enrich_library"),
   onResolverStatus: (
     handler: (status: ResolverStatus) => void,
   ): Promise<UnlistenFn> =>

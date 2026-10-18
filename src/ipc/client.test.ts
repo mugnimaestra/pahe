@@ -16,16 +16,23 @@ describe("ipc", () => {
   });
 
   it("reads settings through the get_settings command", async () => {
-    invoke.mockResolvedValue({ baseUrl: "https://animepahe.pw" });
+    invoke.mockResolvedValue({
+      baseUrl: "https://animepahe.pw",
+      libraryFolder: "/Users/me/Downloads/animepahe",
+    });
 
     await expect(ipc.getSettings()).resolves.toEqual({
       baseUrl: "https://animepahe.pw",
+      libraryFolder: "/Users/me/Downloads/animepahe",
     });
     expect(invoke).toHaveBeenCalledWith("get_settings");
   });
 
   it("saves settings through the save_settings command", async () => {
-    const settings = { baseUrl: "https://mirror.example" };
+    const settings = {
+      baseUrl: "https://mirror.example",
+      libraryFolder: "/Users/me/Downloads/animepahe",
+    };
     invoke.mockResolvedValue(settings);
 
     await expect(ipc.saveSettings(settings)).resolves.toEqual(settings);
@@ -70,6 +77,36 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("fetch_poster", {
       url: "https://i.animepahe.pw/posters/one.jpg",
     });
+  });
+
+  it("loads the Library through the load_library command", async () => {
+    const library = [
+      {
+        animeId: "anime-id",
+        title: "Seitokai ni mo Ana wa Aru!",
+        poster: "https://i.animepahe.pw/posters/one.jpg",
+        episodeCount: 3,
+      },
+    ];
+    invoke.mockResolvedValue(library);
+
+    await expect(ipc.loadLibrary()).resolves.toEqual(library);
+    expect(invoke).toHaveBeenCalledWith("load_library");
+  });
+
+  it("enriches the Library through the enrich_library command", async () => {
+    const library = [
+      {
+        animeId: null,
+        title: "Seitokai ni mo Ana wa Aru",
+        poster: null,
+        episodeCount: 1,
+      },
+    ];
+    invoke.mockResolvedValue(library);
+
+    await expect(ipc.enrichLibrary()).resolves.toEqual(library);
+    expect(invoke).toHaveBeenCalledWith("enrich_library");
   });
 
   it("subscribes to Resolver status events", async () => {

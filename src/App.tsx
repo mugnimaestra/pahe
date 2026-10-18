@@ -1,4 +1,5 @@
 import { useState } from "react";
+import LibraryView from "./views/LibraryView";
 import SearchView from "./views/SearchView";
 import SettingsView from "./views/SettingsView";
 import "./App.css";
@@ -49,6 +50,8 @@ export default function App() {
       <main className="content">
         {view === "search" ? (
           <SearchView />
+        ) : view === "library" ? (
+          <LibraryView />
         ) : view === "settings" ? (
           <SettingsView />
         ) : (
