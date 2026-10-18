@@ -1,0 +1,28 @@
+src-tauri/Cargo.lock
+  h_2d220f5439def3 1588-1593,3793
+src-tauri/Cargo.toml
+  h_2d220f5439def3 20
+src-tauri/src/lib.rs
+  h_2d220f5439def3 3,11,16,22-31,39,46,181-202,229-230,333-336
+src-tauri/src/library.rs
+  h_2d220f5439def3 152-193,702-745
+src-tauri/src/player.rs
+  h_2d220f5439def3 1-46
+src-tauri/tauri.conf.json
+  h_2d220f5439def3 24-28
+src/ipc/client.test.ts
+  h_2d220f5439def3 3,6,8,17,199-251
+src/ipc/client.ts
+  h_2d220f5439def3 1,106-117,152-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82ea1644dbabae3e779b64b1fb46e81959623594",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
