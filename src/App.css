@@ -378,6 +378,7 @@ button:disabled {
 }
 
 .episode-actions button,
+.player-head button,
 .queue button {
   padding: 6px 12px;
   border: 1px solid #35363d;
@@ -390,6 +391,7 @@ button:disabled {
 }
 
 .episode-actions button:not(:disabled):hover,
+.player-head button:not(:disabled):hover,
 .queue button:not(:disabled):hover {
   border-color: #4a4b54;
 }
@@ -402,6 +404,38 @@ button:disabled {
 
 .view-queue {
   max-width: 760px;
+}
+
+.view-library-episodes {
+  max-width: 760px;
+}
+
+.view-player {
+  max-width: 760px;
+}
+
+.player-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 24px;
+}
+
+.player-head h1 {
+  margin: 0;
+}
+
+.player-head button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.player-video {
+  width: 100%;
+  margin-top: 20px;
+  border-radius: 8px;
+  background: #000;
 }
 
 .queue {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Poster from "../components/Poster";
 import { ipc, type LibraryAnime } from "../ipc/client";
 import { messageOf } from "../message";
+import LibraryAnimeView from "./LibraryAnimeView";
 
 type State =
   | { kind: "loading" }
@@ -10,6 +11,7 @@ type State =
 
 export default function LibraryView() {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [selected, setSelected] = useState<LibraryAnime | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -40,6 +42,15 @@ export default function LibraryView() {
     };
   }, []);
 
+  if (selected !== null) {
+    return (
+      <LibraryAnimeView
+        anime={selected}
+        onBack={() => setSelected(null)}
+      />
+    );
+  }
+
   return (
     <section className="view view-library">
       <header>
@@ -61,13 +72,19 @@ export default function LibraryView() {
         <ul className="results" aria-label="Library">
           {state.anime.map((anime) => (
             <li key={anime.animeId ?? anime.title}>
-              <Poster url={anime.poster} alt={`${anime.title} poster`} />
-              <span className="result-title">{anime.title}</span>
-              <span className="muted">
-                {anime.episodeCount === 1
-                  ? "1 Episode"
-                  : `${anime.episodeCount} Episodes`}
-              </span>
+              <button
+                type="button"
+                className="result"
+                onClick={() => setSelected(anime)}
+              >
+                <Poster url={anime.poster} alt={`${anime.title} poster`} />
+                <span className="result-title">{anime.title}</span>
+                <span className="muted">
+                  {anime.episodeCount === 1
+                    ? "1 Episode"
+                    : `${anime.episodeCount} Episodes`}
+                </span>
+              </button>
             </li>
           ))}
         </ul>

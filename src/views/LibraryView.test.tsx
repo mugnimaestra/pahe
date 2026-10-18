@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../ipc/client", () => ({
@@ -7,11 +7,15 @@ vi.mock("../ipc/client", () => ({
     loadLibrary: vi.fn(),
     enrichLibrary: vi.fn(),
     fetchPoster: vi.fn(),
+    libraryItems: vi.fn(),
+    checkLibraryFile: vi.fn(),
+    libraryFileUrl: vi.fn(),
+    openExternally: vi.fn(),
   },
 }));
 
 import LibraryView from "./LibraryView";
-import { ipc, type LibraryAnime } from "../ipc/client";
+import { ipc, type LibraryAnime, type LibraryItem } from "../ipc/client";
 
 const mocked = vi.mocked(ipc);
 
@@ -101,5 +105,47 @@ describe("library view", () => {
     expect(await screen.findByText("Seitokai ni mo Ana wa Aru!")).toBeTruthy();
     expect(container.querySelector(".poster-empty")).toBeTruthy();
     expect(mocked.fetchPoster).not.toHaveBeenCalled();
+  });
+
+  it("opens an Anime's Episodes, plays one, and comes back", async () => {
+    const items: LibraryItem[] = [
+      {
+        animeId: "anime-id",
+        titleSlug: "Seitokai_ni_mo_Ana_wa_Aru",
+        poster: null,
+        episode: 1,
+        version: 2,
+        quality: "1080p",
+        group: "ADN",
+        path: "/library/AnimePahe_Seitokai_ni_mo_Ana_wa_Aru_-_01v2_1080p_ADN.mp4",
+      },
+    ];
+    mocked.loadLibrary.mockResolvedValue(LIBRARY);
+    mocked.enrichLibrary.mockResolvedValue(LIBRARY);
+    mocked.libraryItems.mockResolvedValue(items);
+    mocked.checkLibraryFile.mockResolvedValue();
+    mocked.libraryFileUrl.mockReturnValue("asset://localhost/one.mp4");
+
+    render(<LibraryView />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Seitokai ni mo Ana wa Aru!/ }),
+    );
+
+    expect(await screen.findByText("Episode 1")).toBeTruthy();
+    expect(mocked.libraryItems).toHaveBeenCalledWith(
+      "anime-id",
+      "Seitokai ni mo Ana wa Aru!",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(
+      await screen.findByRole("heading", { name: "Episode 1" }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "← Back to Episodes" }));
+    fireEvent.click(screen.getByRole("button", { name: "← Back to the Library" }));
+
+    expect(await screen.findByText("Seitokai ni mo Ana wa Aru!")).toBeTruthy();
   });
 });
