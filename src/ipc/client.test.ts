@@ -158,10 +158,27 @@ describe("ipc", () => {
   });
 
   it("reads the queue through the load_queue command", async () => {
-    invoke.mockResolvedValue([]);
+    const queue = { jobs: [], active: false, challenge: false };
+    invoke.mockResolvedValue(queue);
 
-    await expect(ipc.loadQueue()).resolves.toEqual([]);
+    await expect(ipc.loadQueue()).resolves.toEqual(queue);
     expect(invoke).toHaveBeenCalledWith("load_queue");
+  });
+
+  it("starts the restored queue through the start_queue command", async () => {
+    const queue = { jobs: [], active: true, challenge: false };
+    invoke.mockResolvedValue(queue);
+
+    await expect(ipc.startQueue()).resolves.toEqual(queue);
+    expect(invoke).toHaveBeenCalledWith("start_queue");
+  });
+
+  it("resumes a job through the resume_download command", async () => {
+    const queue = { jobs: [], active: true, challenge: false };
+    invoke.mockResolvedValue(queue);
+
+    await expect(ipc.resumeDownload("job-1")).resolves.toEqual(queue);
+    expect(invoke).toHaveBeenCalledWith("resume_download", { jobId: "job-1" });
   });
 
   it("reads owned Episodes through the owned_episodes command", async () => {

@@ -47,7 +47,13 @@ export interface ResolverStatus {
   state: ResolverPhase;
 }
 
-export type DownloadState = "queued" | "running" | "completed" | "failed";
+export type DownloadState =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "paused";
 
 export interface DownloadProgress {
   bytes: number;
@@ -97,6 +103,14 @@ export interface OwnedEpisode {
   quality: string;
 }
 
+/** Every Download job, plus whether the worker runs and a Challenge holds it. */
+export interface QueueSnapshot {
+  jobs: DownloadJob[];
+  /** False after a restart until the user starts or resumes a job. */
+  active: boolean;
+  challenge: boolean;
+}
+
 /**
  * The only bridge to Rust. UI code imports this module, never `@tauri-apps/api`.
  */
@@ -124,7 +138,12 @@ export const ipc = {
   enqueueDownloads: (requests: DownloadRequest[]): Promise<Enqueued> =>
     invoke<Enqueued>("enqueue_downloads", { requests }),
   /** The current Download jobs in enqueue order. */
-  loadQueue: (): Promise<DownloadJob[]> => invoke<DownloadJob[]>("load_queue"),
+  loadQueue: (): Promise<QueueSnapshot> => invoke<QueueSnapshot>("load_queue"),
+  /** Starts the restored queue; restored jobs never run on launch by themselves. */
+  startQueue: (): Promise<QueueSnapshot> => invoke<QueueSnapshot>("start_queue"),
+  /** Resumes an interrupted or paused job, or retries a failed one. */
+  resumeDownload: (jobId: string): Promise<QueueSnapshot> =>
+    invoke<QueueSnapshot>("resume_download", { jobId }),
   onDownloadJob: (handler: (job: DownloadJob) => void): Promise<UnlistenFn> =>
     listen<DownloadJob>("download://job", (event) => handler(event.payload)),
   onResolverStatus: (

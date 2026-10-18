@@ -350,7 +350,8 @@ button:disabled {
 
 .download-progress,
 .download-done,
-.download-error {
+.download-error,
+.download-paused {
   font-size: 13px;
 }
 
@@ -360,6 +361,10 @@ button:disabled {
 
 .download-done {
   color: #7bd88f;
+}
+
+.download-paused {
+  color: #e0b76a;
 }
 
 .download-error {
@@ -372,7 +377,8 @@ button:disabled {
   margin-top: 14px;
 }
 
-.episode-actions button {
+.episode-actions button,
+.queue button {
   padding: 6px 12px;
   border: 1px solid #35363d;
   border-radius: 6px;
@@ -383,7 +389,8 @@ button:disabled {
   cursor: pointer;
 }
 
-.episode-actions button:not(:disabled):hover {
+.episode-actions button:not(:disabled):hover,
+.queue button:not(:disabled):hover {
   border-color: #4a4b54;
 }
 
@@ -416,6 +423,10 @@ button:disabled {
 
 .queue .result-title {
   flex: 1 1 240px;
+}
+
+.queue-start {
+  margin-top: 16px;
 }
 
 .queue .download-error {

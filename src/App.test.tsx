@@ -13,6 +13,8 @@ vi.mock("./ipc/client", () => ({
     onResolverStatus: vi.fn(),
     onDownloadJob: vi.fn(),
     loadQueue: vi.fn(),
+    startQueue: vi.fn(),
+    resumeDownload: vi.fn(),
   },
 }));
 
@@ -33,7 +35,11 @@ describe("app shell", () => {
     mocked.onDownloadJob.mockResolvedValue(() => {});
     mocked.loadLibrary.mockResolvedValue([]);
     mocked.enrichLibrary.mockResolvedValue([]);
-    mocked.loadQueue.mockResolvedValue([]);
+    mocked.loadQueue.mockResolvedValue({
+      jobs: [],
+      active: false,
+      challenge: false,
+    });
   });
 
   it("renders the navigation between the main views", () => {
