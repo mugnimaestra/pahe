@@ -45,6 +45,9 @@ pub struct Request {
     pub episode: u32,
     pub session: String,
     pub quality: String,
+    /// Fetches again even though the Library owns this Episode and Quality.
+    #[serde(default)]
+    pub redownload: bool,
 }
 
 /// A Download job, shaped so the queue can add more of them without changes.
@@ -53,6 +56,7 @@ pub struct Request {
 pub struct Job {
     pub id: String,
     pub anime_id: String,
+    pub title: String,
     pub episode: u32,
     pub quality: String,
     pub state: JobState,
@@ -61,7 +65,7 @@ pub struct Job {
 }
 
 impl Job {
-    /// A fresh running job for `request`, before its Source is resolved.
+    /// A fresh queued job for `request`, before it reaches the engine.
     pub fn new(request: &Request) -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -74,9 +78,10 @@ impl Job {
         Self {
             id: format!("{stamp}-{counter}"),
             anime_id: request.anime_id.clone(),
+            title: request.title.clone(),
             episode: request.episode,
             quality: request.quality.clone(),
-            state: JobState::Running,
+            state: JobState::Queued,
             progress: None,
             error: None,
         }
@@ -122,6 +127,7 @@ where
     Fut: Future<Output = Result<Resolved, String>>,
     G: Fn(&Job),
 {
+    job.state = JobState::Running;
     report(&job);
 
     if let Err(error) = tokio::fs::create_dir_all(folder).await {
@@ -429,7 +435,8 @@ fn sanitize_filename(name: &str) -> String {
     cleaned
 }
 
-fn title_slug(title: &str) -> String {
+/// `Even the Student Council Has Its Holes!` -> `Even_the_Student_Council_Has_Its_Holes`.
+pub fn title_slug(title: &str) -> String {
     let words: Vec<String> = title
         .split(|ch: char| !ch.is_alphanumeric())
         .filter(|word| !word.is_empty())
@@ -485,6 +492,7 @@ mod tests {
             episode: 4,
             session: "play-session".to_owned(),
             quality: "1080p".to_owned(),
+            redownload: false,
         }
     }
 

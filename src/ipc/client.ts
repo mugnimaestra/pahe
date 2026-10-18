@@ -60,6 +60,7 @@ export interface DownloadProgress {
 export interface DownloadJob {
   id: string;
   animeId: string;
+  title: string;
   episode: number;
   quality: string;
   state: DownloadState;
@@ -72,6 +73,27 @@ export interface DownloadRequest {
   title: string;
   episode: number;
   session: string;
+  quality: string;
+  /** Fetches again even though the Library owns this Episode and Quality. */
+  redownload: boolean;
+}
+
+export type SkipReason = "inLibrary" | "inQueue";
+
+export interface SkippedDownload {
+  animeId: string;
+  episode: number;
+  quality: string;
+  reason: SkipReason;
+}
+
+export interface Enqueued {
+  jobs: DownloadJob[];
+  skipped: SkippedDownload[];
+}
+
+export interface OwnedEpisode {
+  episode: number;
   quality: string;
 }
 
@@ -95,9 +117,14 @@ export const ipc = {
   /** Caches Anime metadata for Library items; rejects only when the index cannot be saved. */
   enrichLibrary: (): Promise<LibraryAnime[]> =>
     invoke<LibraryAnime[]>("enrich_library"),
-  /** Starts a Download job and returns its initial state; progress arrives as events. */
-  startDownload: (request: DownloadRequest): Promise<DownloadJob> =>
-    invoke<DownloadJob>("start_download", { request }),
+  /** Every Episode and Quality the Library already holds for an Anime. */
+  ownedEpisodes: (animeId: string, title: string): Promise<OwnedEpisode[]> =>
+    invoke<OwnedEpisode[]>("owned_episodes", { animeId, title }),
+  /** Queues Download jobs, skipping Episodes the Library or an active job owns. */
+  enqueueDownloads: (requests: DownloadRequest[]): Promise<Enqueued> =>
+    invoke<Enqueued>("enqueue_downloads", { requests }),
+  /** The current Download jobs in enqueue order. */
+  loadQueue: (): Promise<DownloadJob[]> => invoke<DownloadJob[]>("load_queue"),
   onDownloadJob: (handler: (job: DownloadJob) => void): Promise<UnlistenFn> =>
     listen<DownloadJob>("download://job", (event) => handler(event.payload)),
   onResolverStatus: (

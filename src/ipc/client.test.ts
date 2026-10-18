@@ -125,27 +125,56 @@ describe("ipc", () => {
     expect(handler).toHaveBeenCalledWith({ state: "challenge" });
   });
 
-  it("starts a Download job through the start_download command", async () => {
-    const request = {
+  it("queues Download jobs through the enqueue_downloads command", async () => {
+    const requests = [
+      {
+        animeId: "anime-id",
+        title: "Fairy Tail",
+        episode: 4,
+        session: "session-four",
+        quality: "1080p",
+        redownload: false,
+      },
+    ];
+    const outcome = {
+      jobs: [
+        {
+          id: "job-1",
+          animeId: "anime-id",
+          title: "Fairy Tail",
+          episode: 4,
+          quality: "1080p",
+          state: "queued",
+          progress: null,
+          error: null,
+        },
+      ],
+      skipped: [],
+    };
+    invoke.mockResolvedValue(outcome);
+
+    await expect(ipc.enqueueDownloads(requests)).resolves.toEqual(outcome);
+    expect(invoke).toHaveBeenCalledWith("enqueue_downloads", { requests });
+  });
+
+  it("reads the queue through the load_queue command", async () => {
+    invoke.mockResolvedValue([]);
+
+    await expect(ipc.loadQueue()).resolves.toEqual([]);
+    expect(invoke).toHaveBeenCalledWith("load_queue");
+  });
+
+  it("reads owned Episodes through the owned_episodes command", async () => {
+    const owned = [{ episode: 1, quality: "1080p" }];
+    invoke.mockResolvedValue(owned);
+
+    await expect(ipc.ownedEpisodes("anime-id", "Fairy Tail")).resolves.toEqual(
+      owned,
+    );
+    expect(invoke).toHaveBeenCalledWith("owned_episodes", {
       animeId: "anime-id",
       title: "Fairy Tail",
-      episode: 4,
-      session: "session-four",
-      quality: "1080p",
-    };
-    const job = {
-      id: "job-1",
-      animeId: "anime-id",
-      episode: 4,
-      quality: "1080p",
-      state: "running",
-      progress: null,
-      error: null,
-    };
-    invoke.mockResolvedValue(job);
-
-    await expect(ipc.startDownload(request)).resolves.toEqual(job);
-    expect(invoke).toHaveBeenCalledWith("start_download", { request });
+    });
   });
 
   it("subscribes to Download job events", async () => {

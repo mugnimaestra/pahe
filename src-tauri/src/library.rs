@@ -79,6 +79,14 @@ pub struct LibraryAnime {
     pub episode_count: usize,
 }
 
+/// One Episode and Quality the Library already holds.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedEpisode {
+    pub episode: f64,
+    pub quality: String,
+}
+
 /// The state of the Library folder, scanned at startup and on demand.
 pub struct Library {
     index_path: PathBuf,
@@ -112,6 +120,33 @@ impl Library {
     /// The Library grouped by Anime.
     pub fn groups(&self) -> Vec<LibraryAnime> {
         groups_of(&self.items.lock().expect("library lock poisoned"))
+    }
+
+    /// Every Episode and Quality the Library owns for an Anime.
+    pub fn owned(&self, anime_id: &str, title: &str) -> Vec<OwnedEpisode> {
+        let items = self.items.lock().expect("library lock poisoned");
+        let mut owned: Vec<OwnedEpisode> = items
+            .iter()
+            .filter(|item| belongs_to(item, anime_id, title))
+            .map(|item| OwnedEpisode {
+                episode: item.episode,
+                quality: item.quality.clone(),
+            })
+            .collect();
+        owned.sort_by(|left, right| {
+            left.episode
+                .total_cmp(&right.episode)
+                .then_with(|| left.quality.cmp(&right.quality))
+        });
+
+        owned
+    }
+
+    /// Whether the Library already holds this Episode at this Quality.
+    pub fn owns(&self, anime_id: &str, title: &str, episode: u32, quality: &str) -> bool {
+        self.owned(anime_id, title).into_iter().any(|owned| {
+            owned.episode == episode as f64 && owned.quality.eq_ignore_ascii_case(quality)
+        })
     }
 
     /// Adopts matching files, drops entries whose files are gone, and writes
@@ -254,6 +289,15 @@ pub fn humanize(title_slug: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// A Library item belongs to an Anime when its enriched id matches, or, before
+/// enrichment, when its filename slug matches the Anime's title.
+fn belongs_to(item: &LibraryItem, anime_id: &str, title: &str) -> bool {
+    match item.anime_id.as_deref() {
+        Some(id) => id == anime_id,
+        None => item.title_slug == crate::download::title_slug(title),
+    }
 }
 
 fn episode_key(episode: f64) -> String {
@@ -611,6 +655,62 @@ mod tests {
 
         assert_eq!(groups[0].episode_count, 1);
         assert_eq!(shelf.stored().items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_enriched_item_owns_its_episode_at_its_quality() {
+        let shelf = Shelf::new();
+        shelf.touch(ONE);
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+        library
+            .enrich(|_| async { Ok(vec![search_result("Seitokai Yakuindomo", None)]) })
+            .await
+            .unwrap();
+
+        assert!(library.owns("anime-id", "A localised title", 1, "1080p"));
+        assert!(!library.owns("anime-id", "A localised title", 1, "720p"));
+        assert!(!library.owns("anime-id", "A localised title", 2, "1080p"));
+        assert!(!library.owns("another-anime", "A localised title", 1, "1080p"));
+    }
+
+    #[test]
+    fn an_unenriched_item_owns_by_title_slug() {
+        let shelf = Shelf::new();
+        shelf.touch(ONE);
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+
+        assert!(library.owns("anime-id", "Seitokai ni mo Ana wa Aru", 1, "1080P"));
+        assert!(!library.owns("anime-id", "Another Anime", 1, "1080p"));
+    }
+
+    #[test]
+    fn owned_lists_every_quality_of_an_episode() {
+        let shelf = Shelf::new();
+        shelf.touch(ONE);
+        shelf.touch("AnimePahe_Seitokai_ni_mo_Ana_wa_Aru_-_01_720p_ADN.mp4");
+        shelf.touch(TWO);
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+
+        assert_eq!(
+            library.owned("anime-id", "Seitokai ni mo Ana wa Aru"),
+            vec![
+                OwnedEpisode {
+                    episode: 1.0,
+                    quality: "1080p".to_owned(),
+                },
+                OwnedEpisode {
+                    episode: 1.0,
+                    quality: "720p".to_owned(),
+                },
+                OwnedEpisode {
+                    episode: 2.0,
+                    quality: "1080p".to_owned(),
+                },
+            ]
+        );
     }
 
     #[test]

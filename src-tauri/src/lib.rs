@@ -3,13 +3,16 @@ mod library;
 mod poster;
 mod probe;
 mod proxy;
+mod queue;
 mod resolver;
 mod settings;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use download::{Job as DownloadJob, Request as DownloadRequest};
-use library::{Library, LibraryAnime};
+use library::{Library, LibraryAnime, OwnedEpisode};
+use queue::{Enqueued, Queue};
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
 use tauri::{Emitter, Manager};
@@ -94,71 +97,55 @@ async fn enrich_library(
         .await
 }
 
-/// Starts one Episode's Download job and returns it immediately.
-///
-/// The Source is resolved inside the job, never here, because a CDN URL expires
-/// before a queued job would run.
+/// Starts one or more Download jobs. The Source is resolved inside each job,
+/// never here, because a CDN URL expires before a queued job would run.
 #[tauri::command]
-async fn start_download(
-    app: tauri::AppHandle,
-    request: DownloadRequest,
-) -> Result<DownloadJob, String> {
+async fn enqueue_downloads(
+    queue: tauri::State<'_, Arc<Queue>>,
+    library: tauri::State<'_, Library>,
+    requests: Vec<DownloadRequest>,
+) -> Result<Enqueued, String> {
+    let requests = requests
+        .into_iter()
+        .map(normalize_request)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(queue.enqueue(requests, |request| {
+        library.owns(
+            &request.anime_id,
+            &request.title,
+            request.episode,
+            &request.quality,
+        )
+    }))
+}
+
+fn normalize_request(mut request: DownloadRequest) -> Result<DownloadRequest, String> {
     if request.anime_id.trim().is_empty()
         || request.session.trim().is_empty()
         || request.title.trim().is_empty()
     {
         return Err("Open the Anime again and pick an Episode.".to_owned());
     }
+    if request.quality.trim().is_empty() {
+        request.quality = "1080p".to_owned();
+    }
 
-    let request = DownloadRequest {
-        quality: match request.quality.trim() {
-            "" => "1080p".to_owned(),
-            quality => quality.to_owned(),
-        },
-        ..request
-    };
-    let job = DownloadJob::new(&request);
-    let folder = PathBuf::from(app.state::<Store>().get().library_folder);
+    Ok(request)
+}
 
-    let _ = app.emit(download::EVENT, &job);
+#[tauri::command]
+fn load_queue(queue: tauri::State<'_, Arc<Queue>>) -> Vec<DownloadJob> {
+    queue.jobs()
+}
 
-    let handle = app.clone();
-    let started = job.clone();
-    tauri::async_runtime::spawn(async move {
-        let base_url = handle.state::<Store>().get().base_url;
-        let resolver = handle.state::<Resolver>();
-        let quality = request.quality.clone();
-        let anime_id = request.anime_id.clone();
-        let session = request.session.clone();
-
-        let finished = download::run(
-            started,
-            &request,
-            &folder,
-            &download::Disk,
-            || async move {
-                resolver
-                    .resolve_source(&base_url, &anime_id, &session, &quality)
-                    .await
-                    .map(|source| download::Resolved {
-                        cdn_url: source.cdn_url,
-                        quality: source.quality,
-                        group: source.group,
-                    })
-                    .map_err(|failure| failure.message)
-            },
-            |job| {
-                let _ = handle.emit(download::EVENT, job);
-            },
-        )
-        .await;
-
-        if finished.state == download::JobState::Completed {
-            let _ = handle.state::<Library>().refresh(&folder);
-        }
-    });
-
-    Ok(job)
+#[tauri::command]
+fn owned_episodes(
+    library: tauri::State<'_, Library>,
+    anime_id: String,
+    title: String,
+) -> Vec<OwnedEpisode> {
+    library.owned(&anime_id, &title)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -190,6 +177,14 @@ pub fn run() {
             app.manage(Resolver::new(app.handle().clone()));
             app.manage(Library::open(app_data_dir.join(library::INDEX_FILE)));
 
+            let queue = Arc::new(Queue::new({
+                let handle = app.handle().clone();
+                move |job| {
+                    let _ = handle.emit(download::EVENT, job);
+                }
+            }));
+            app.manage(Arc::clone(&queue));
+
             // The scan is local and fast; enrichment waits until the Library
             // view asks for it so startup never depends on the network.
             let handle = app.handle().clone();
@@ -198,6 +193,51 @@ pub fn run() {
                 if let Err(error) = handle.state::<Library>().refresh(Path::new(&folder)) {
                     eprintln!("library scan: {error}");
                 }
+            });
+
+            // One worker drives the serial queue; jobs publish their own state.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                queue
+                    .serve(move |job, request| {
+                        let handle = handle.clone();
+                        async move {
+                            let settings = handle.state::<Store>().get();
+                            let folder = PathBuf::from(settings.library_folder);
+                            let base_url = settings.base_url;
+                            let resolver = handle.state::<Resolver>();
+                            let quality = request.quality.clone();
+                            let anime_id = request.anime_id.clone();
+                            let session = request.session.clone();
+                            let queue = handle.state::<Arc<Queue>>().inner().clone();
+
+                            let finished = download::run(
+                                job,
+                                &request,
+                                &folder,
+                                &download::Disk,
+                                || async move {
+                                    resolver
+                                        .resolve_source(&base_url, &anime_id, &session, &quality)
+                                        .await
+                                        .map(|source| download::Resolved {
+                                            cdn_url: source.cdn_url,
+                                            quality: source.quality,
+                                            group: source.group,
+                                        })
+                                        .map_err(|failure| failure.message)
+                                },
+                                |job| queue.report(job),
+                            )
+                            .await;
+
+                            if finished.state == download::JobState::Completed {
+                                let _ = handle.state::<Library>().refresh(&folder);
+                            }
+                            finished
+                        }
+                    })
+                    .await;
             });
 
             Ok(())
@@ -210,7 +250,9 @@ pub fn run() {
             fetch_poster,
             load_library,
             enrich_library,
-            start_download
+            enqueue_downloads,
+            load_queue,
+            owned_episodes
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");

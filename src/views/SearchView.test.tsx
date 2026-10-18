@@ -9,6 +9,8 @@ vi.mock("../ipc/client", () => ({
     loadAnime: vi.fn(),
     onResolverStatus: vi.fn(),
     onDownloadJob: vi.fn(),
+    ownedEpisodes: vi.fn(),
+    enqueueDownloads: vi.fn(),
   },
 }));
 
@@ -37,6 +39,7 @@ describe("search view", () => {
     mocked.onResolverStatus.mockResolvedValue(() => {});
     mocked.onDownloadJob.mockResolvedValue(() => {});
     mocked.fetchPoster.mockResolvedValue("data:image/jpeg;base64,abc");
+    mocked.ownedEpisodes.mockResolvedValue([]);
   });
 
   it("starts idle", () => {

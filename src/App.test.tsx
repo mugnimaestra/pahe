@@ -12,6 +12,7 @@ vi.mock("./ipc/client", () => ({
     enrichLibrary: vi.fn(),
     onResolverStatus: vi.fn(),
     onDownloadJob: vi.fn(),
+    loadQueue: vi.fn(),
   },
 }));
 
@@ -32,6 +33,7 @@ describe("app shell", () => {
     mocked.onDownloadJob.mockResolvedValue(() => {});
     mocked.loadLibrary.mockResolvedValue([]);
     mocked.enrichLibrary.mockResolvedValue([]);
+    mocked.loadQueue.mockResolvedValue([]);
   });
 
   it("renders the navigation between the main views", () => {
@@ -61,6 +63,16 @@ describe("app shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
     expect(screen.getByRole("heading", { name: "Settings" })).toBeTruthy();
+  });
+
+  it("switches to the queue view", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(screen.getByRole("heading", { name: "Queue" })).toBeTruthy();
+    expect(await screen.findByText("No Download jobs yet.")).toBeTruthy();
+    expect(mocked.loadQueue).toHaveBeenCalled();
   });
 
   it("shows the persisted base url", async () => {

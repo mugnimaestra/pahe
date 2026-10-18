@@ -8,7 +8,8 @@ vi.mock("../ipc/client", () => ({
     loadAnime: vi.fn(),
     onResolverStatus: vi.fn(),
     onDownloadJob: vi.fn(),
-    startDownload: vi.fn(),
+    ownedEpisodes: vi.fn(),
+    enqueueDownloads: vi.fn(),
   },
 }));
 
@@ -17,6 +18,7 @@ import {
   ipc,
   type AnimeDetail,
   type DownloadJob,
+  type Enqueued,
   type ResolverStatus,
   type SearchResult,
 } from "../ipc/client";
@@ -46,6 +48,7 @@ function job(overrides: Partial<DownloadJob> = {}): DownloadJob {
   return {
     id: "job-1",
     animeId: RESULT.animeId,
+    title: RESULT.title,
     episode: 1,
     quality: "1080p",
     state: "running",
@@ -53,6 +56,10 @@ function job(overrides: Partial<DownloadJob> = {}): DownloadJob {
     error: null,
     ...overrides,
   };
+}
+
+function enqueued(overrides: Partial<Enqueued> = {}): Enqueued {
+  return { jobs: [], skipped: [], ...overrides };
 }
 
 function renderDetail(onBack = vi.fn()) {
@@ -77,6 +84,8 @@ describe("anime detail view", () => {
       return () => {};
     });
     mocked.fetchPoster.mockResolvedValue("data:image/webp;base64,abc");
+    mocked.ownedEpisodes.mockResolvedValue([]);
+    mocked.enqueueDownloads.mockResolvedValue(enqueued());
   });
 
   it("shows the poster, title, year, and synopsis", async () => {
@@ -179,9 +188,9 @@ describe("anime detail view", () => {
     ).toBe("1080p");
   });
 
-  it("starts a 1080p Download for the Episode and its Session", async () => {
+  it("enqueues a 1080p Download for the Episode and its Session", async () => {
     mocked.loadAnime.mockResolvedValue(DETAIL);
-    mocked.startDownload.mockResolvedValue(job());
+    mocked.enqueueDownloads.mockResolvedValue(enqueued({ jobs: [job()] }));
     renderDetail();
 
     fireEvent.click(
@@ -189,19 +198,24 @@ describe("anime detail view", () => {
     );
 
     await waitFor(() =>
-      expect(mocked.startDownload).toHaveBeenCalledWith({
-        animeId: RESULT.animeId,
-        title: RESULT.title,
-        episode: 1,
-        session: "session-one",
-        quality: "1080p",
-      }),
+      expect(mocked.enqueueDownloads).toHaveBeenCalledWith([
+        {
+          animeId: RESULT.animeId,
+          title: RESULT.title,
+          episode: 1,
+          session: "session-one",
+          quality: "1080p",
+          redownload: false,
+        },
+      ]),
     );
   });
 
   it("sends a chosen Quality override", async () => {
     mocked.loadAnime.mockResolvedValue(DETAIL);
-    mocked.startDownload.mockResolvedValue(job({ quality: "720p" }));
+    mocked.enqueueDownloads.mockResolvedValue(
+      enqueued({ jobs: [job({ quality: "720p" })] }),
+    );
     renderDetail();
 
     fireEvent.change(
@@ -211,10 +225,120 @@ describe("anime detail view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Download Episode 1" }));
 
     await waitFor(() =>
-      expect(mocked.startDownload).toHaveBeenCalledWith(
+      expect(mocked.enqueueDownloads).toHaveBeenCalledWith([
         expect.objectContaining({ episode: 1, quality: "720p" }),
-      ),
+      ]),
     );
+  });
+
+  it("queues the selected Episodes in order with their own Qualities", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.enqueueDownloads.mockResolvedValue(
+      enqueued({ jobs: [job(), job({ id: "job-2", episode: 2 })] }),
+    );
+    renderDetail();
+
+    fireEvent.click(await screen.findByLabelText("Select Episode 2"));
+    fireEvent.change(screen.getByLabelText("Quality for Episode 2"), {
+      target: { value: "720p" },
+    });
+    fireEvent.click(screen.getByLabelText("Select Episode 1"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Download selected" }),
+    );
+
+    await waitFor(() =>
+      expect(mocked.enqueueDownloads).toHaveBeenCalledWith([
+        expect.objectContaining({ episode: 1, quality: "1080p" }),
+        expect.objectContaining({ episode: 2, quality: "720p" }),
+      ]),
+    );
+  });
+
+  it("queues every Episode the Library does not own when Download all is used", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.ownedEpisodes.mockResolvedValue([{ episode: 1, quality: "1080p" }]);
+    mocked.enqueueDownloads.mockResolvedValue(
+      enqueued({ jobs: [job({ episode: 2 })] }),
+    );
+    renderDetail();
+
+    expect(await screen.findByText("Owned 1080p")).toBeTruthy();
+    expect(
+      (await screen.findByLabelText("Select Episode 1") as HTMLInputElement)
+        .disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Download all" }));
+
+    await waitFor(() =>
+      expect(mocked.enqueueDownloads).toHaveBeenCalledWith([
+        expect.objectContaining({ episode: 2, redownload: false }),
+      ]),
+    );
+  });
+
+  it("redownloads an owned Episode only when asked explicitly", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.ownedEpisodes.mockResolvedValue([{ episode: 1, quality: "1080p" }]);
+    mocked.enqueueDownloads.mockResolvedValue(enqueued({ jobs: [job()] }));
+    renderDetail();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Redownload Episode 1" }),
+    );
+
+    await waitFor(() =>
+      expect(mocked.enqueueDownloads).toHaveBeenCalledWith([
+        expect.objectContaining({ episode: 1, redownload: true }),
+      ]),
+    );
+  });
+
+  it("says which Episodes the Library or the queue already holds", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.enqueueDownloads.mockResolvedValue(
+      enqueued({
+        skipped: [
+          {
+            animeId: RESULT.animeId,
+            episode: 1,
+            quality: "1080p",
+            reason: "inLibrary",
+          },
+          {
+            animeId: RESULT.animeId,
+            episode: 2,
+            quality: "1080p",
+            reason: "inQueue",
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Download all" }),
+    );
+
+    expect(
+      (await screen.findByRole("status")).textContent,
+    ).toBe(
+      "Already in the Library: Episode 1 (1080p). Already queued: Episode 2 (1080p).",
+    );
+  });
+
+  it("marks an Episode owned when its Download finishes", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.ownedEpisodes
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{ episode: 1, quality: "1080p" }]);
+    renderDetail();
+
+    await download(job({ state: "completed" }));
+
+    expect(await screen.findByText("Owned 1080p")).toBeTruthy();
+    expect(mocked.ownedEpisodes).toHaveBeenCalledTimes(2);
   });
 
   it("shows preparing while the Source is resolved", async () => {
@@ -284,7 +408,7 @@ describe("anime detail view", () => {
 
   it("shows why a Download could not start", async () => {
     mocked.loadAnime.mockResolvedValue(DETAIL);
-    mocked.startDownload.mockRejectedValue(
+    mocked.enqueueDownloads.mockRejectedValue(
       "Open the Anime again and pick an Episode.",
     );
     renderDetail();

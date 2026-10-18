@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react";
 import Poster from "../components/Poster";
+import { progressText, upsertJob } from "../downloads";
 import { useResolverChallenge } from "../hooks/useResolverChallenge";
 import {
   ipc,
   type AnimeDetail,
   type DownloadJob,
-  type DownloadProgress,
+  type Enqueued,
   type Episode,
+  type OwnedEpisode,
   type SearchResult,
+  type SkippedDownload,
 } from "../ipc/client";
 import { failureOf } from "../failure";
 import { messageOf } from "../message";
@@ -16,6 +19,8 @@ type State =
   | { kind: "loading" }
   | { kind: "ready"; detail: AnimeDetail }
   | { kind: "failed"; message: string };
+
+type Notice = { kind: "info" | "error"; message: string };
 
 const QUALITIES = ["1080p", "720p", "360p"];
 const DEFAULT_QUALITY = "1080p";
@@ -32,8 +37,11 @@ export default function AnimeDetailView({
   const [state, setState] = useState<State>({ kind: "loading" });
   const [challenge] = useResolverChallenge();
   const [qualities, setQualities] = useState<Record<number, string>>({});
+  const [selected, setSelected] = useState<number[]>([]);
+  const [owned, setOwned] = useState<OwnedEpisode[]>([]);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
-  const [startErrors, setStartErrors] = useState<Record<number, string>>({});
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [enqueueing, setEnqueueing] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -57,12 +65,42 @@ export default function AnimeDetailView({
 
   useEffect(() => {
     let active = true;
+
+    ipc
+      .ownedEpisodes(result.animeId, result.title)
+      .then((episodes) => {
+        if (active) setOwned(episodes);
+      })
+      .catch(() => {
+        // Ownership is advisory; the Rust queue still refuses duplicates.
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [result.animeId, result.title]);
+
+  useEffect(() => {
+    let active = true;
     let stop: (() => void) | undefined;
 
     ipc
       .onDownloadJob((job) => {
         if (!active) return;
         setJobs((current) => upsertJob(current, job));
+        if (job.state !== "completed" || job.animeId !== result.animeId) return;
+
+        setSelected((current) =>
+          current.filter((number) => number !== job.episode),
+        );
+        ipc
+          .ownedEpisodes(result.animeId, result.title)
+          .then((episodes) => {
+            if (active) setOwned(episodes);
+          })
+          .catch(() => {
+            // The completed job already reports its own success.
+          });
       })
       .then((unlisten) => {
         if (active) stop = unlisten;
@@ -76,31 +114,65 @@ export default function AnimeDetailView({
       active = false;
       stop?.();
     };
-  }, []);
+  }, [result.animeId, result.title]);
 
-  async function startDownload(episode: Episode) {
-    setStartErrors((current) => {
-      const next = { ...current };
-      delete next[episode.number];
-      return next;
-    });
+  function qualityOf(episode: number): string {
+    return qualities[episode] ?? DEFAULT_QUALITY;
+  }
 
+  function ownedAt(episode: number, quality: string): boolean {
+    return owned.some(
+      (item) => item.episode === episode && item.quality === quality,
+    );
+  }
+
+  function ownedQualities(episode: number): string[] {
+    return owned
+      .filter((item) => item.episode === episode)
+      .map((item) => item.quality);
+  }
+
+  function toggle(episode: number) {
+    setSelected((current) =>
+      current.includes(episode)
+        ? current.filter((number) => number !== episode)
+        : [...current, episode],
+    );
+  }
+
+  async function enqueue(episodes: Episode[], redownload: boolean) {
+    if (episodes.length === 0 || enqueueing) return;
+
+    setNotice(null);
+    setEnqueueing(true);
     try {
-      const job = await ipc.startDownload({
-        animeId: result.animeId,
-        title: result.title,
-        episode: episode.number,
-        session: episode.session,
-        quality: qualities[episode.number] ?? DEFAULT_QUALITY,
-      });
-      setJobs((current) => upsertJob(current, job));
+      const outcome = await ipc.enqueueDownloads(
+        episodes.map((episode) => ({
+          animeId: result.animeId,
+          title: result.title,
+          episode: episode.number,
+          session: episode.session,
+          quality: qualityOf(episode.number),
+          redownload,
+        })),
+      );
+      setJobs((current) => outcome.jobs.reduce(upsertJob, current));
+      setSelected([]);
+      setNotice(describe(outcome));
     } catch (error) {
-      setStartErrors((current) => ({
-        ...current,
-        [episode.number]: messageOf(error),
-      }));
+      setNotice({ kind: "error", message: messageOf(error) });
+    } finally {
+      setEnqueueing(false);
     }
   }
+
+  const episodes = state.kind === "ready" ? state.detail.episodes : [];
+  const available = episodes.filter(
+    (episode) => !ownedAt(episode.number, qualityOf(episode.number)),
+  );
+  const picked = available.filter((episode) =>
+    selected.includes(episode.number),
+  );
 
   return (
     <article className="view view-detail">
@@ -138,13 +210,46 @@ export default function AnimeDetailView({
       {state.kind === "ready" && state.detail.episodes.length > 0 && (
         <section aria-labelledby="episodes-heading">
           <h2 id="episodes-heading">Episodes</h2>
+
+          <div className="episode-actions">
+            <button
+              type="button"
+              disabled={enqueueing || picked.length === 0}
+              onClick={() => enqueue(picked, false)}
+            >
+              Download selected
+            </button>
+            <button
+              type="button"
+              disabled={enqueueing || available.length === 0}
+              onClick={() => enqueue(available, false)}
+            >
+              Download all
+            </button>
+          </div>
+
+          {notice && (
+            <p role={notice.kind === "error" ? "alert" : "status"}>
+              {notice.message}
+            </p>
+          )}
+
           <ul className="episodes">
             {state.detail.episodes.map((episode) => {
+              const quality = qualityOf(episode.number);
+              const ownedHere = ownedAt(episode.number, quality);
               const job = latestJob(jobs, result.animeId, episode.number);
               const busy = job?.state === "running" || job?.state === "queued";
 
               return (
                 <li key={episode.number}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select Episode ${episode.number}`}
+                    checked={!ownedHere && selected.includes(episode.number)}
+                    disabled={ownedHere}
+                    onChange={() => toggle(episode.number)}
+                  />
                   <span>Episode {episode.number}</span>
                   <span className="muted">
                     {episode.airDate ?? "Air date unknown"}
@@ -152,33 +257,35 @@ export default function AnimeDetailView({
                   <div className="episode-download">
                     <select
                       aria-label={`Quality for Episode ${episode.number}`}
-                      value={qualities[episode.number] ?? DEFAULT_QUALITY}
+                      value={quality}
                       onChange={(event) => {
-                        const quality = event.currentTarget.value;
+                        const next = event.currentTarget.value;
                         setQualities((current) => ({
                           ...current,
-                          [episode.number]: quality,
+                          [episode.number]: next,
                         }));
                       }}
                     >
-                      {QUALITIES.map((quality) => (
-                        <option key={quality} value={quality}>
-                          {quality}
+                      {QUALITIES.map((label) => (
+                        <option key={label} value={label}>
+                          {label}
                         </option>
                       ))}
                     </select>
                     <button
                       type="button"
-                      aria-label={`Download Episode ${episode.number}`}
-                      disabled={busy}
-                      onClick={() => startDownload(episode)}
+                      aria-label={`${ownedHere ? "Redownload" : "Download"} Episode ${episode.number}`}
+                      disabled={busy || enqueueing}
+                      onClick={() => enqueue([episode], ownedHere)}
                     >
-                      Download
+                      {ownedHere ? "Redownload" : "Download"}
                     </button>
-                    <EpisodeDownloadStatus
-                      job={job}
-                      startError={startErrors[episode.number]}
-                    />
+                    {ownedQualities(episode.number).length > 0 && (
+                      <span className="download-done">
+                        Owned {ownedQualities(episode.number).join(", ")}
+                      </span>
+                    )}
+                    <EpisodeDownloadStatus job={job} />
                   </div>
                 </li>
               );
@@ -190,20 +297,7 @@ export default function AnimeDetailView({
   );
 }
 
-function EpisodeDownloadStatus({
-  job,
-  startError,
-}: {
-  job: DownloadJob | undefined;
-  startError: string | undefined;
-}) {
-  if (startError !== undefined) {
-    return (
-      <span role="alert" className="download-error">
-        {startError}
-      </span>
-    );
-  }
+function EpisodeDownloadStatus({ job }: { job: DownloadJob | undefined }) {
   if (job === undefined) return null;
 
   switch (job.state) {
@@ -220,44 +314,36 @@ function EpisodeDownloadStatus({
     case "running":
       return (
         <span className="download-progress">
-          {job.progress === null
-            ? "Preparing…"
-            : progressText(job.progress)}
+          {job.progress === null ? "Preparing…" : progressText(job.progress)}
         </span>
       );
   }
 }
 
-function progressText(progress: DownloadProgress): string {
-  const total =
-    progress.total === null ? "" : ` / ${formatBytes(progress.total)}`;
-  const speed =
-    progress.speed === null ? "" : ` · ${formatBytes(progress.speed)}/s`;
-  const eta =
-    progress.etaSeconds === null ? "" : ` · ${formatEta(progress.etaSeconds)}`;
+function describe(outcome: Enqueued): Notice | null {
+  const parts = [
+    skippedNote(outcome.skipped, "inLibrary", "Already in the Library"),
+    skippedNote(outcome.skipped, "inQueue", "Already queued"),
+  ].filter((part): part is string => part !== null);
 
-  return `${formatBytes(progress.bytes)}${total}${speed}${eta}`;
+  return parts.length > 0
+    ? { kind: "info", message: parts.join(" ") }
+    : null;
 }
 
-function formatBytes(bytes: number): string {
-  return `${(bytes / 1_000_000).toFixed(1)} MB`;
-}
+function skippedNote(
+  skipped: SkippedDownload[],
+  reason: SkippedDownload["reason"],
+  label: string,
+): string | null {
+  const matches = skipped.filter((item) => item.reason === reason);
+  if (matches.length === 0) return null;
 
-function formatEta(seconds: number): string {
-  const rounded = Math.max(0, Math.round(seconds));
-  const minutes = Math.floor(rounded / 60);
-  const remaining = rounded % 60;
+  const episodes = matches
+    .map((item) => `Episode ${item.episode} (${item.quality})`)
+    .join(", ");
 
-  return minutes > 0 ? `${minutes}m ${remaining}s left` : `${remaining}s left`;
-}
-
-function upsertJob(jobs: DownloadJob[], job: DownloadJob): DownloadJob[] {
-  const index = jobs.findIndex((current) => current.id === job.id);
-  if (index === -1) return [...jobs, job];
-
-  const next = jobs.slice();
-  next[index] = job;
-  return next;
+  return `${label}: ${episodes}.`;
 }
 
 function latestJob(

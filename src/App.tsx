@@ -1,33 +1,21 @@
 import { useState } from "react";
 import LibraryView from "./views/LibraryView";
+import QueueView from "./views/QueueView";
 import SearchView from "./views/SearchView";
 import SettingsView from "./views/SettingsView";
 import "./App.css";
 
 const VIEWS = [
-  {
-    id: "search",
-    label: "Search",
-    description: "Find an Anime by title and open its Episodes.",
-  },
-  {
-    id: "library",
-    label: "Library",
-    description: "Downloaded Episodes live here.",
-  },
-  {
-    id: "queue",
-    label: "Queue",
-    description: "Download jobs and their progress appear here.",
-  },
-  { id: "settings", label: "Settings", description: "" },
+  { id: "search", label: "Search" },
+  { id: "library", label: "Library" },
+  { id: "queue", label: "Queue" },
+  { id: "settings", label: "Settings" },
 ] as const;
 
 type View = (typeof VIEWS)[number]["id"];
 
 export default function App() {
   const [view, setView] = useState<View>("search");
-  const current = VIEWS.find((item) => item.id === view) ?? VIEWS[0];
 
   return (
     <div className="shell">
@@ -52,13 +40,10 @@ export default function App() {
           <SearchView />
         ) : view === "library" ? (
           <LibraryView />
-        ) : view === "settings" ? (
-          <SettingsView />
+        ) : view === "queue" ? (
+          <QueueView />
         ) : (
-          <section className="view view-quiet">
-            <h1>{current.label}</h1>
-            <p className="muted">{current.description}</p>
-          </section>
+          <SettingsView />
         )}
       </main>
     </div>

@@ -365,3 +365,59 @@ button:disabled {
 .download-error {
   color: #ff8f8f;
 }
+
+.episode-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.episode-actions button {
+  padding: 6px 12px;
+  border: 1px solid #35363d;
+  border-radius: 6px;
+  background: #15161a;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.episode-actions button:not(:disabled):hover {
+  border-color: #4a4b54;
+}
+
+.episodes input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: #7c5cff;
+}
+
+.view-queue {
+  max-width: 760px;
+}
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queue li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid #26272c;
+}
+
+.queue .result-title {
+  flex: 1 1 240px;
+}
+
+.queue .download-error {
+  flex-basis: 100%;
+}
