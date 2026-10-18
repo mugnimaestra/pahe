@@ -49,6 +49,7 @@ impl Store {
         let settings = Settings {
             base_url: normalize_base_url(&settings.base_url)?,
         };
+        let mut current = self.current.lock().expect("settings lock poisoned");
 
         if let Some(dir) = self.path.parent() {
             fs::create_dir_all(dir)
@@ -60,7 +61,7 @@ impl Store {
         fs::write(&temp, json).map_err(|e| format!("could not save settings: {e}"))?;
         fs::rename(&temp, &self.path).map_err(|e| format!("could not save settings: {e}"))?;
 
-        *self.current.lock().expect("settings lock poisoned") = settings.clone();
+        *current = settings.clone();
         Ok(settings)
     }
 }
