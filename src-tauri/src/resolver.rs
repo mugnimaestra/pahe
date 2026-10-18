@@ -1,7 +1,9 @@
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::utils::config::BackgroundThrottlingPolicy;
@@ -23,6 +25,10 @@ const DATA_STORE: [u8; 16] = *b"pahe-resolver-01";
 const CHALLENGE_TIMEOUT: Duration = Duration::from_secs(600);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const PAGE_LOAD_TIMEOUT: Duration = Duration::from_secs(20);
+const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(30);
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(20);
+const RESET_TIMEOUT: Duration = Duration::from_secs(10);
+const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const MAX_FAILURES: u32 = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -45,7 +51,27 @@ pub struct AnimeDetail {
 #[serde(rename_all = "camelCase")]
 pub struct Episode {
     pub number: u32,
+    pub session: String,
     pub air_date: Option<String>,
+}
+
+/// A quality-labelled download Source offered by an Episode's play page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Source {
+    pub label: String,
+    pub href: String,
+    pub quality: String,
+    pub height: u32,
+    pub group: String,
+}
+
+/// The Resolver's answer for one Episode: the captured CDN URL plus the Source
+/// details the download needs for naming and display.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedSource {
+    pub cdn_url: String,
+    pub quality: String,
+    pub group: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -92,31 +118,99 @@ pub struct ResolverStatus {
     pub state: ResolverPhase,
 }
 
-struct Session {
+/// The Resolver window's current origin, kept so a second call reuses it and a
+/// Base URL change rebuilds it.
+struct ResolverWindow {
     base_url: String,
+}
+
+/// Captures the CDN navigation a kwik form submission triggers.
+///
+/// `on_navigation` is synchronous, so the gate keeps the URL and tells wry to
+/// block the navigation. The async side arms it, submits the form, then polls
+/// for the captured URL.
+#[derive(Default)]
+pub struct RedirectGate {
+    armed: AtomicBool,
+    allowed_hosts: std::sync::Mutex<Vec<String>>,
+    captured: std::sync::Mutex<Option<String>>,
+}
+
+impl RedirectGate {
+    /// Blocks every host except the ones the form submission needs, and clears
+    /// any URL from a previous attempt.
+    pub fn arm<I, S>(&self, allowed_hosts: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        *self.captured.lock().expect("redirect gate poisoned") = None;
+        *self.allowed_hosts.lock().expect("redirect gate poisoned") = allowed_hosts
+            .into_iter()
+            .map(|host| {
+                host.as_ref()
+                    .trim_start_matches("www.")
+                    .to_ascii_lowercase()
+            })
+            .collect();
+        self.armed.store(true, Ordering::SeqCst);
+    }
+
+    pub fn disarm(&self) {
+        self.armed.store(false, Ordering::SeqCst);
+    }
+
+    pub fn captured(&self) -> Option<String> {
+        self.captured
+            .lock()
+            .expect("redirect gate poisoned")
+            .clone()
+    }
+
+    /// Whether wry must block this navigation. The CDN URL is kept first.
+    pub fn intercept(&self, url: &Url) -> bool {
+        if !self.armed.load(Ordering::SeqCst) || !matches!(url.scheme(), "http" | "https") {
+            return false;
+        }
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        if self
+            .allowed_hosts
+            .lock()
+            .expect("redirect gate poisoned")
+            .iter()
+            .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+        {
+            return false;
+        }
+
+        *self.captured.lock().expect("redirect gate poisoned") = Some(url.to_string());
+        true
+    }
 }
 
 /// Owns the one persistent Resolver webview and serializes all resolution work.
 pub struct Resolver {
     app: AppHandle,
-    session: Mutex<Session>,
+    session: Mutex<ResolverWindow>,
     probe: Mutex<Option<(String, ProbeOutcome)>>,
     proxy: Mutex<Option<ProxyHandle>>,
     posters: Posters,
     user_agent: Mutex<Option<String>>,
+    redirects: Arc<RedirectGate>,
 }
 
 impl Resolver {
     pub fn new(app: AppHandle) -> Self {
         Self {
             app,
-            session: Mutex::new(Session {
+            session: Mutex::new(ResolverWindow {
                 base_url: String::new(),
             }),
             probe: Mutex::new(None),
             proxy: Mutex::new(None),
             posters: Posters::new(),
             user_agent: Mutex::new(None),
+            redirects: Arc::new(RedirectGate::default()),
         }
     }
 
@@ -222,6 +316,356 @@ impl Resolver {
             .await
     }
 
+    /// Resolves one Episode's chosen Source into a CDN URL.
+    ///
+    /// The play page, the pahe.win hop, and the kwik form all run in the one
+    /// Resolver webview, behind the same lock as search and detail. The window
+    /// goes back to the Base URL before this returns so the next call starts
+    /// same-origin.
+    pub async fn resolve_source(
+        &self,
+        base_url: &str,
+        anime_id: &str,
+        session: &str,
+        quality: &str,
+    ) -> Result<ResolvedSource, ResolverFailure> {
+        if anime_id.trim().is_empty() || session.trim().is_empty() {
+            return Err(ResolverFailure::failed(
+                "Open the Anime again and pick an Episode.",
+            ));
+        }
+
+        let mut guard = self.session.lock().await;
+        let window = self.ensure_window(&mut guard, base_url).await?;
+        let result = self
+            .resolve_candidates(&window, base_url, anime_id, session, quality)
+            .await;
+        self.reset_to_base(&window, base_url).await;
+        result
+    }
+
+    async fn resolve_candidates(
+        &self,
+        window: &WebviewWindow,
+        base_url: &str,
+        anime_id: &str,
+        session: &str,
+        quality: &str,
+    ) -> Result<ResolvedSource, ResolverFailure> {
+        let play = play_url(base_url, anime_id, session)?;
+        self.navigate_ready(window, &play).await?;
+
+        let pairs = self
+            .eval_json::<Vec<(String, String)>>(window, SOURCE_LINKS_SCRIPT)
+            .await
+            .map_err(|error| {
+                ResolverFailure::failed(format!("Could not read the Episode page: {error}"))
+            })?
+            .unwrap_or_default();
+        let sources = sources_from_pairs(pairs);
+        if sources.is_empty() {
+            return Err(ResolverFailure::failed(
+                "No download Sources are listed for this Episode.",
+            ));
+        }
+
+        let mut last_error = None;
+        for source in order_sources(sources, quality) {
+            match self.capture_cdn(window, base_url, &source).await {
+                Ok(cdn_url) => {
+                    return Ok(ResolvedSource {
+                        cdn_url,
+                        quality: source.quality,
+                        group: source.group,
+                    });
+                }
+                // A Challenge or an unreachable host is not a dead Source;
+                // trying the next Quality would only repeat the same wait.
+                Err(failure) if failure.kind != ResolverFailureKind::Failed => {
+                    return Err(failure);
+                }
+                Err(failure) => last_error = Some(failure.message),
+            }
+        }
+
+        let detail = last_error.unwrap_or_else(|| "No Source answered.".to_owned());
+        Err(ResolverFailure::failed(format!(
+            "Every download Source for this Episode is dead. {detail}"
+        )))
+    }
+
+    async fn capture_cdn(
+        &self,
+        window: &WebviewWindow,
+        base_url: &str,
+        source: &Source,
+    ) -> Result<String, ResolverFailure> {
+        let href = Url::parse(&source.href)
+            .map_err(|_| ResolverFailure::failed("A download Source has an invalid link."))?;
+        self.navigate_ready(window, &href).await?;
+
+        let kwik = self.wait_for_kwik(window).await?;
+        let form = self.wait_for_download_form(window).await?;
+        self.submit_download_form(window, base_url, &kwik, &form)
+            .await
+    }
+
+    /// pahe.win sometimes shows a countdown page whose Continue link carries the
+    /// kwik URL. Follow that link, or accept a Source that already landed on kwik.
+    async fn wait_for_kwik(&self, window: &WebviewWindow) -> Result<Url, ResolverFailure> {
+        let deadline = Instant::now() + NAVIGATION_TIMEOUT;
+
+        loop {
+            let snapshot = self
+                .wait_for(window, "The download Source did not open.", |page| {
+                    page.ready
+                })
+                .await?;
+
+            if is_kwik_file(&snapshot.url) {
+                return Url::parse(&snapshot.url)
+                    .map_err(|_| ResolverFailure::failed("kwik sent an invalid URL."));
+            }
+
+            if let Some(href) = self
+                .eval_json::<String>(window, KWIK_LINK_SCRIPT)
+                .await
+                .ok()
+                .flatten()
+            {
+                let url = Url::parse(&href)
+                    .map_err(|_| ResolverFailure::failed("kwik sent an invalid URL."))?;
+                self.navigate_ready(window, &url).await?;
+                return Ok(url);
+            }
+
+            if Instant::now() >= deadline {
+                return Err(ResolverFailure::failed(
+                    "The Source did not lead to a kwik download page.",
+                ));
+            }
+            sleep(POLL_INTERVAL).await;
+        }
+    }
+
+    async fn wait_for_download_form(
+        &self,
+        window: &WebviewWindow,
+    ) -> Result<DownloadForm, ResolverFailure> {
+        let deadline = Instant::now() + NAVIGATION_TIMEOUT;
+
+        loop {
+            let _ = self
+                .wait_for(window, "The kwik page did not load.", |page| page.ready)
+                .await?;
+
+            if let Some(form) = self
+                .eval_json::<DownloadForm>(window, DOWNLOAD_FORM_SCRIPT)
+                .await
+                .ok()
+                .flatten()
+                && !form.action.is_empty()
+                && !form.token.is_empty()
+            {
+                return Ok(form);
+            }
+
+            if Instant::now() >= deadline {
+                return Err(ResolverFailure::failed(
+                    "The kwik page did not offer a download form.",
+                ));
+            }
+            sleep(POLL_INTERVAL).await;
+        }
+    }
+
+    /// Submits the form inside the page and keeps the navigation it triggers.
+    async fn submit_download_form(
+        &self,
+        window: &WebviewWindow,
+        base_url: &str,
+        kwik: &Url,
+        form: &DownloadForm,
+    ) -> Result<String, ResolverFailure> {
+        let base_host = Url::parse(base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_default();
+        let mut allowed = vec!["kwik.cx", "pahe.win"];
+        if !base_host.is_empty() {
+            allowed.push(base_host.as_str());
+        }
+        self.redirects.arm(allowed);
+
+        if let Err(error) = window.eval(submit_script(&form.action, &form.token)) {
+            self.redirects.disarm();
+            return Err(ResolverFailure::failed(format!(
+                "Could not submit the kwik download form: {error}"
+            )));
+        }
+
+        let deadline = Instant::now() + CAPTURE_TIMEOUT;
+        let captured = loop {
+            if let Some(cdn_url) = self.redirects.captured() {
+                break Some(cdn_url);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            sleep(Duration::from_millis(100)).await;
+        };
+        self.redirects.disarm();
+
+        captured.ok_or_else(|| {
+            ResolverFailure::failed(format!(
+                "kwik did not redirect to a CDN for {}.",
+                kwik.host_str().unwrap_or("the Source")
+            ))
+        })
+    }
+
+    /// Loads `url` in the Resolver and waits for that page, walking the user
+    /// through a Challenge when one appears.
+    async fn navigate_ready(
+        &self,
+        window: &WebviewWindow,
+        url: &Url,
+    ) -> Result<PageSnapshot, ResolverFailure> {
+        window.navigate(url.clone()).map_err(|error| {
+            ResolverFailure::failed(format!(
+                "Could not open {}: {error}",
+                url.host_str().unwrap_or("the page")
+            ))
+        })?;
+
+        self.wait_for(window, "The page did not load.", |page| {
+            same_page(&page.url, url)
+        })
+        .await
+    }
+
+    async fn wait_for<F>(
+        &self,
+        window: &WebviewWindow,
+        message: &str,
+        mut ready: F,
+    ) -> Result<PageSnapshot, ResolverFailure>
+    where
+        F: FnMut(&PageSnapshot) -> bool,
+    {
+        let deadline = Instant::now() + NAVIGATION_TIMEOUT;
+        let mut surfaced = false;
+        let mut challenge_deadline = None;
+
+        loop {
+            if let Ok(snapshot) = self.snapshot(window).await {
+                if is_challenge_page(&snapshot) {
+                    if !surfaced {
+                        surfaced = true;
+                        self.surface_challenge(window);
+                    }
+                    let until = *challenge_deadline
+                        .get_or_insert_with(|| Instant::now() + CHALLENGE_TIMEOUT);
+                    if Instant::now() >= until {
+                        return Err(ResolverFailure {
+                            kind: ResolverFailureKind::ChallengeTimedOut,
+                            message: "Cloudflare asked for a human check and the Resolver window was not cleared in time. Try again.".to_owned(),
+                        });
+                    }
+                    sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+
+                if surfaced {
+                    surfaced = false;
+                    self.hide_challenge(window);
+                }
+                if snapshot.ready && ready(&snapshot) {
+                    return Ok(snapshot);
+                }
+            }
+
+            if Instant::now() >= deadline {
+                return Err(ResolverFailure::failed(format!(
+                    "{message} Check your connection and try again."
+                )));
+            }
+            sleep(POLL_INTERVAL).await;
+        }
+    }
+
+    async fn snapshot(&self, window: &WebviewWindow) -> Result<PageSnapshot, String> {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        window
+            .eval_with_callback(SNAPSHOT_SCRIPT, move |value| {
+                let _ = tx.send(value);
+            })
+            .map_err(|error| error.to_string())?;
+
+        let raw = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .map_err(|_| "the Resolver did not answer.".to_owned())?
+            .ok_or_else(|| "the Resolver did not answer.".to_owned())?;
+        decode_json(&raw).ok_or_else(|| "the Resolver sent an unexpected page.".to_owned())
+    }
+
+    async fn eval_json<T: DeserializeOwned>(
+        &self,
+        window: &WebviewWindow,
+        script: &str,
+    ) -> Result<Option<T>, String> {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        window
+            .eval_with_callback(script, move |value| {
+                let _ = tx.send(value);
+            })
+            .map_err(|error| error.to_string())?;
+
+        let raw = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .map_err(|_| "the Resolver did not answer.".to_owned())?
+            .ok_or_else(|| "the Resolver did not answer.".to_owned())?;
+        Ok(decode_json(&raw))
+    }
+
+    /// Puts the Resolver back on the Base URL so same-origin fetches work again.
+    async fn reset_to_base(&self, window: &WebviewWindow, base_url: &str) {
+        let Ok(base) = Url::parse(base_url) else {
+            return;
+        };
+        if window.navigate(base.clone()).is_err() {
+            return;
+        }
+
+        let deadline = Instant::now() + RESET_TIMEOUT;
+        while Instant::now() < deadline {
+            if window
+                .url()
+                .ok()
+                .is_some_and(|url| url.origin() == base.origin())
+            {
+                return;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    fn surface_challenge(&self, window: &WebviewWindow) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        self.emit_status(ResolverPhase::Challenge);
+    }
+
+    fn hide_challenge(&self, window: &WebviewWindow) {
+        let _ = window.hide();
+        self.emit_status(ResolverPhase::Idle);
+    }
+
+    fn emit_status(&self, state: ResolverPhase) {
+        let _ = self.app.emit(STATUS_EVENT, ResolverStatus { state });
+    }
+
     async fn user_agent(&self, window: &WebviewWindow) -> Result<String, String> {
         if let Some(user_agent) = self.user_agent.lock().await.clone() {
             return Ok(user_agent);
@@ -282,7 +726,7 @@ impl Resolver {
 
     async fn ensure_window(
         &self,
-        session: &mut Session,
+        session: &mut ResolverWindow,
         base_url: &str,
     ) -> Result<WebviewWindow, ResolverFailure> {
         if session.base_url == base_url {
@@ -307,6 +751,7 @@ impl Resolver {
             .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
 
         let (ready_tx, mut ready_rx) = watch::channel(false);
+        let redirects = Arc::clone(&self.redirects);
         let mut builder =
             WebviewWindowBuilder::new(&self.app, RESOLVER_LABEL, WebviewUrl::External(url))
                 .title("animepahe")
@@ -316,6 +761,7 @@ impl Resolver {
                 .skip_taskbar(true)
                 .background_throttling(BackgroundThrottlingPolicy::Disabled)
                 .data_store_identifier(DATA_STORE)
+                .on_navigation(move |url| !redirects.intercept(url))
                 .on_page_load(move |_window, payload| {
                     if payload.event() == PageLoadEvent::Finished {
                         let _ = ready_tx.send(true);
@@ -444,15 +890,7 @@ impl Resolver {
                 Ok(result) if is_challenge(&result) => {
                     if !surfaced {
                         surfaced = true;
-                        let _ = window.show();
-                        let _ = window.unminimize();
-                        let _ = window.set_focus();
-                        let _ = self.app.emit(
-                            STATUS_EVENT,
-                            ResolverStatus {
-                                state: ResolverPhase::Challenge,
-                            },
-                        );
+                        self.surface_challenge(window);
                     }
 
                     let deadline = *challenge_deadline
@@ -477,13 +915,7 @@ impl Resolver {
         };
 
         if surfaced {
-            let _ = window.hide();
-            let _ = self.app.emit(
-                STATUS_EVENT,
-                ResolverStatus {
-                    state: ResolverPhase::Idle,
-                },
-            );
+            self.hide_challenge(window);
         }
 
         outcome
@@ -564,6 +996,234 @@ fn release_url(base_url: &str, anime_id: &str, page: u32) -> Result<Url, Resolve
         .append_pair("sort", "episode_asc")
         .append_pair("page", &page.to_string());
     Ok(url)
+}
+
+fn play_url(base_url: &str, anime_id: &str, session: &str) -> Result<Url, ResolverFailure> {
+    let mut url = Url::parse(base_url)
+        .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
+    url.set_path("/play");
+    url.path_segments_mut()
+        .map_err(|_| ResolverFailure::failed("The Base URL cannot hold a play path."))?
+        .push(anime_id)
+        .push(session);
+    Ok(url)
+}
+
+const SNAPSHOT_SCRIPT: &str = r#"JSON.stringify({
+  url: location.href,
+  title: document.title,
+  ready: document.readyState === "complete",
+  text: (document.body ? (document.body.innerText || "") : "").slice(0, 4000)
+})"#;
+
+/// Every Source link on the play page, hidden or not, like the CLI's collector.
+const SOURCE_LINKS_SCRIPT: &str = r#"JSON.stringify(
+  [...document.querySelectorAll("a[href]")]
+    .map((a) => [((a.textContent || a.getAttribute("title") || "").trim()), a.href])
+    .filter(([, href]) => /pahe\.win\//.test(href) || /kwik\.cx\/f\//.test(href))
+)"#;
+
+const KWIK_LINK_SCRIPT: &str = r#"JSON.stringify(
+  (() => {
+    const link = [...document.querySelectorAll("a[href]")].find((a) => /kwik\.cx\/f\//.test(a.href));
+    return link ? link.href : null;
+  })()
+)"#;
+
+const DOWNLOAD_FORM_SCRIPT: &str = r#"JSON.stringify(
+  (() => {
+    const form = document.querySelector('form[action*="/d/"]');
+    if (!form) return null;
+    const token = form.querySelector('input[name="_token"]');
+    return { action: form.getAttribute("action") || "", token: token ? token.value : "" };
+  })()
+)"#;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageSnapshot {
+    url: String,
+    title: String,
+    ready: bool,
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadForm {
+    action: String,
+    token: String,
+}
+
+fn submit_script(action: &str, token: &str) -> String {
+    let action = serde_json::to_string(action).expect("action is valid JSON");
+    let token = serde_json::to_string(token).expect("token is valid JSON");
+
+    format!(
+        r#"(() => {{
+  const form = document.querySelector('form[action*="/d/"]');
+  form.action = {action};
+  form.querySelector('input[name="_token"]').value = {token};
+  form.submit();
+}})()"#
+    )
+}
+
+fn decode_json<T: DeserializeOwned>(raw: &str) -> Option<T> {
+    let inner = serde_json::from_str::<String>(raw.trim()).ok()?;
+    if inner == "null" {
+        return None;
+    }
+    serde_json::from_str(&inner).ok()
+}
+
+fn same_page(current: &str, wanted: &Url) -> bool {
+    Url::parse(current)
+        .is_ok_and(|url| url.origin() == wanted.origin() && url.path() == wanted.path())
+}
+
+fn is_kwik_file(url: &str) -> bool {
+    Url::parse(url).is_ok_and(|url| {
+        url.host_str()
+            .is_some_and(|host| host == "kwik.cx" || host.ends_with(".kwik.cx"))
+            && url.path().starts_with("/f/")
+    })
+}
+
+/// A Cloudflare human-verification gate. pahe.win's own "Attention Required!"
+/// countdown is not one: it renders a Continue link instead.
+fn is_challenge_page(page: &PageSnapshot) -> bool {
+    let title = page.title.to_ascii_lowercase();
+    let text = page.text.to_ascii_lowercase();
+
+    title.contains("just a moment")
+        || text.contains("just a moment")
+        || text.contains("challenge-platform")
+        || text.contains("cf-challenge")
+        || text.contains("checking your browser")
+}
+
+/// Quality-labelled Source links in a stable, deduplicated order.
+pub fn sources_from_pairs<I>(pairs: I) -> Vec<Source>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let mut sources: Vec<Source> = Vec::new();
+
+    for (label, href) in pairs {
+        if !is_source_href(&href) || sources.iter().any(|source| source.href == href) {
+            continue;
+        }
+        sources.push(source_from_label(&label, href));
+    }
+
+    sources
+}
+
+fn is_source_href(href: &str) -> bool {
+    Url::parse(href).is_ok_and(|url| {
+        let host = url.host_str().unwrap_or_default();
+        host == "pahe.win"
+            || host.ends_with(".pahe.win")
+            || ((host == "kwik.cx" || host.ends_with(".kwik.cx")) && url.path().starts_with("/f/"))
+    })
+}
+
+fn source_from_label(label: &str, href: String) -> Source {
+    let label = label.trim().to_owned();
+    match quality_in(&label) {
+        Some((quality, height, start)) => Source {
+            group: group_of(&label[..start]),
+            label,
+            href,
+            quality,
+            height,
+        },
+        None => Source {
+            group: group_of(&label),
+            label,
+            href,
+            quality: "unknown".to_owned(),
+            height: 0,
+        },
+    }
+}
+
+/// The first `720p`-shaped token in a label, with its height and start offset.
+fn quality_in(label: &str) -> Option<(String, u32, usize)> {
+    let bytes = label.as_bytes();
+
+    for start in 0..bytes.len() {
+        if !bytes[start].is_ascii_digit() || (start > 0 && bytes[start - 1].is_ascii_alphanumeric())
+        {
+            continue;
+        }
+
+        let mut end = start;
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        let digits = &label[start..end];
+        if !(2..=4).contains(&digits.len())
+            || end >= bytes.len()
+            || !bytes[end].eq_ignore_ascii_case(&b'p')
+        {
+            continue;
+        }
+        if bytes
+            .get(end + 1)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+
+        let height = digits.parse().ok()?;
+        return Some((format!("{digits}p"), height, start));
+    }
+
+    None
+}
+
+fn group_of(label: &str) -> String {
+    let group = label
+        .trim()
+        .trim_end_matches(['·', '-', '|', ':', ' '])
+        .split_whitespace()
+        .next()
+        .unwrap_or("animepahe");
+
+    sanitize_component(group)
+}
+
+fn sanitize_component(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .map(|ch| if ch.is_alphanumeric() { ch } else { '_' })
+        .collect();
+    let cleaned = cleaned.trim_matches('_').to_owned();
+
+    if cleaned.is_empty() {
+        "animepahe".to_owned()
+    } else {
+        cleaned
+    }
+}
+
+/// Highest Quality first, then the requested Quality ahead of the rest so an
+/// override that exists is tried before a better copy the user did not ask for.
+pub fn order_sources(sources: Vec<Source>, preferred: &str) -> Vec<Source> {
+    let mut ordered = sources;
+    ordered.sort_by_key(|source| std::cmp::Reverse(source.height));
+
+    if let Some(index) = ordered
+        .iter()
+        .position(|source| source.quality == preferred)
+    {
+        let preferred = ordered.remove(index);
+        ordered.insert(0, preferred);
+    }
+
+    ordered
 }
 
 fn fetch_script(url: &str, id: &str, accept: &str) -> String {
@@ -765,6 +1425,7 @@ fn parse_release_page(body: &str) -> Result<ReleasePage, ResolverFailure> {
         .filter_map(|row| {
             Some(Episode {
                 number: u32::try_from(row.get("episode")?.as_u64()?).ok()?,
+                session: row.get("session")?.as_str()?.to_owned(),
                 air_date: air_date(row.get("created_at")),
             })
         })
@@ -1056,6 +1717,7 @@ mod tests {
             {
                 "id": 4389,
                 "episode": 3,
+                "session": "aabbccddeeff00112233445566778899",
                 "created_at": "not a date"
             }
         ]
@@ -1064,6 +1726,7 @@ mod tests {
     fn episode(number: u32) -> Episode {
         Episode {
             number,
+            session: format!("session-{number}"),
             air_date: None,
         }
     }
@@ -1078,18 +1741,35 @@ mod tests {
             vec![
                 Episode {
                     number: 1,
+                    session: "1c600e41110dd17d00bc96db2208bf0e6c1c044d528246ac229d80f5aa480170"
+                        .to_owned(),
                     air_date: Some("2018-06-11".to_owned()),
                 },
                 Episode {
                     number: 2,
+                    session: "f0e1d2c3b4a5968778695a4b3c2d1e0f".to_owned(),
                     air_date: None,
                 },
                 Episode {
                     number: 3,
+                    session: "aabbccddeeff00112233445566778899".to_owned(),
                     air_date: None,
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_release_without_a_session_is_not_downloadable() {
+        let body = r#"{"last_page": 1, "data": [
+            {"episode": 1, "session": "abc"},
+            {"episode": 2}
+        ]}"#;
+
+        let page = parse_release_page(body).unwrap();
+
+        assert_eq!(page.episodes.len(), 1);
+        assert_eq!(page.episodes[0].session, "abc");
     }
 
     #[test]
@@ -1223,5 +1903,177 @@ mod tests {
         assert!(air_date(Some(&Value::String(String::new()))).is_none());
         assert!(air_date(Some(&Value::Null)).is_none());
         assert!(air_date(None).is_none());
+    }
+
+    #[test]
+    fn play_url_points_at_the_episode_session() {
+        let url = play_url(
+            BASE,
+            "89020780-9234-cf42-534e-53cb2c4ff91d",
+            "4c605c9eacba95acd4f65f28c7f9d2b4e862a64dd78f0a2b4ab3c28446ac5f3e",
+        )
+        .unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://animepahe.pw/play/89020780-9234-cf42-534e-53cb2c4ff91d/4c605c9eacba95acd4f65f28c7f9d2b4e862a64dd78f0a2b4ab3c28446ac5f3e"
+        );
+    }
+
+    fn pairs() -> Vec<(String, String)> {
+        vec![
+            (
+                "ADN v2 · 360p (41MB)".to_owned(),
+                "https://pahe.win/FjgsZ".to_owned(),
+            ),
+            (
+                "ADN v2 · 1080p (135MB)".to_owned(),
+                "https://pahe.win/OcVWM".to_owned(),
+            ),
+            (
+                "ADN v2 · 720p (87MB)".to_owned(),
+                "https://pahe.win/qWMsR".to_owned(),
+            ),
+            (
+                "ADN v2 · 1080p (135MB)".to_owned(),
+                "https://pahe.win/OcVWM".to_owned(),
+            ),
+            (
+                "Episode 1".to_owned(),
+                "https://animepahe.pw/play/anime/session".to_owned(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn reads_quality_group_and_href_from_every_source_label() {
+        let sources = sources_from_pairs(pairs());
+
+        assert_eq!(sources.len(), 3);
+        assert_eq!(
+            sources[1],
+            Source {
+                label: "ADN v2 · 1080p (135MB)".to_owned(),
+                href: "https://pahe.win/OcVWM".to_owned(),
+                quality: "1080p".to_owned(),
+                height: 1080,
+                group: "ADN".to_owned(),
+            }
+        );
+        assert_eq!(sources[0].quality, "360p");
+        assert_eq!(sources[2].quality, "720p");
+    }
+
+    #[test]
+    fn a_source_without_a_quality_label_still_ranks_last() {
+        let sources = sources_from_pairs([
+            (
+                "ADN v2 · 1080p (135MB)".to_owned(),
+                "https://pahe.win/OcVWM".to_owned(),
+            ),
+            ("Backup".to_owned(), "https://kwik.cx/f/AbC123".to_owned()),
+            ("A page".to_owned(), "https://example.com/a".to_owned()),
+        ]);
+
+        let ordered = order_sources(sources, "1080p");
+
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].quality, "1080p");
+        assert_eq!(ordered[1].quality, "unknown");
+        assert_eq!(ordered[1].height, 0);
+    }
+
+    #[test]
+    fn defaults_to_the_highest_quality_then_honours_an_override() {
+        let ordered = order_sources(sources_from_pairs(pairs()), "1080p");
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|source| source.quality.as_str())
+                .collect::<Vec<_>>(),
+            vec!["1080p", "720p", "360p"]
+        );
+
+        let overridden = order_sources(sources_from_pairs(pairs()), "720p");
+        assert_eq!(
+            overridden
+                .iter()
+                .map(|source| source.quality.as_str())
+                .collect::<Vec<_>>(),
+            vec!["720p", "1080p", "360p"]
+        );
+    }
+
+    #[test]
+    fn an_override_that_is_absent_falls_back_to_the_best_quality() {
+        let ordered = order_sources(sources_from_pairs(pairs()), "480p");
+
+        assert_eq!(ordered[0].quality, "1080p");
+    }
+
+    #[test]
+    fn the_redirect_gate_blocks_only_navigations_away_from_kwik() {
+        let gate = RedirectGate::default();
+
+        let kwik = Url::parse("https://kwik.cx/d/OcVWM").unwrap();
+        let cdn = Url::parse(
+            "https://vault-99.owocdn.top/mp4/99/02/abc?file=AnimePahe_One_-_01_1080p_ADN.mp4",
+        )
+        .unwrap();
+
+        assert!(
+            !gate.intercept(&cdn),
+            "a disarmed gate lets everything through"
+        );
+
+        gate.arm(["kwik.cx", "pahe.win", "animepahe.pw"]);
+
+        assert!(!gate.intercept(&kwik));
+        assert!(gate.intercept(&cdn));
+        assert_eq!(gate.captured().as_deref(), Some(cdn.as_str()));
+
+        gate.disarm();
+        assert!(!gate.intercept(&cdn));
+    }
+
+    #[test]
+    fn arming_the_redirect_gate_forgets_the_previous_capture() {
+        let gate = RedirectGate::default();
+        let cdn = Url::parse("https://vault-1.owocdn.top/mp4/x?file=one.mp4").unwrap();
+
+        gate.arm(["kwik.cx"]);
+        assert!(gate.intercept(&cdn));
+        assert!(gate.captured().is_some());
+
+        gate.arm(["kwik.cx"]);
+        assert!(gate.captured().is_none());
+    }
+
+    #[test]
+    fn recognises_the_kwik_file_page_and_rejects_other_kwik_pages() {
+        assert!(is_kwik_file("https://kwik.cx/f/hTrfQ1Jv4BLD"));
+        assert!(is_kwik_file("https://www.kwik.cx/f/abc"));
+        assert!(!is_kwik_file("https://kwik.cx/"));
+        assert!(!is_kwik_file("https://notkwik.cx/f/abc"));
+        assert!(!is_kwik_file("https://animepahe.pw/play/a/b"));
+    }
+
+    #[test]
+    fn a_cloudflare_challenge_page_is_not_confused_with_pahewins_countdown() {
+        let challenge = PageSnapshot {
+            url: "https://kwik.cx/f/abc".to_owned(),
+            title: "Just a moment...".to_owned(),
+            ready: true,
+            text: String::new(),
+        };
+        let countdown = PageSnapshot {
+            url: "https://pahe.win/OcVWM".to_owned(),
+            title: "Attention Required! | Cloudflare - Pahewin".to_owned(),
+            ready: true,
+            text: "Continue in 5 seconds".to_owned(),
+        };
+
+        assert!(is_challenge_page(&challenge));
+        assert!(!is_challenge_page(&countdown));
     }
 }

@@ -57,7 +57,7 @@ describe("ipc", () => {
   it("loads an Anime detail through the load_anime command", async () => {
     const detail = {
       synopsis: "A wizard guild in the Kingdom of Fiore.",
-      episodes: [{ number: 1, airDate: "2018-06-11" }],
+      episodes: [{ number: 1, session: "session-one", airDate: "2018-06-11" }],
     };
     invoke.mockResolvedValue(detail);
 
@@ -123,5 +123,44 @@ describe("ipc", () => {
     callback({ payload: { state: "challenge" } });
 
     expect(handler).toHaveBeenCalledWith({ state: "challenge" });
+  });
+
+  it("starts a Download job through the start_download command", async () => {
+    const request = {
+      animeId: "anime-id",
+      title: "Fairy Tail",
+      episode: 4,
+      session: "session-four",
+      quality: "1080p",
+    };
+    const job = {
+      id: "job-1",
+      animeId: "anime-id",
+      episode: 4,
+      quality: "1080p",
+      state: "running",
+      progress: null,
+      error: null,
+    };
+    invoke.mockResolvedValue(job);
+
+    await expect(ipc.startDownload(request)).resolves.toEqual(job);
+    expect(invoke).toHaveBeenCalledWith("start_download", { request });
+  });
+
+  it("subscribes to Download job events", async () => {
+    const unlisten = vi.fn();
+    listen.mockResolvedValue(unlisten);
+    const handler = vi.fn();
+
+    await expect(ipc.onDownloadJob(handler)).resolves.toBe(unlisten);
+    expect(listen).toHaveBeenCalledWith("download://job", expect.any(Function));
+
+    const callback = listen.mock.calls[0][1] as (event: {
+      payload: { id: string };
+    }) => void;
+    callback({ payload: { id: "job-1" } });
+
+    expect(handler).toHaveBeenCalledWith({ id: "job-1" });
   });
 });

@@ -8,6 +8,7 @@ vi.mock("../ipc/client", () => ({
     searchAnime: vi.fn(),
     loadAnime: vi.fn(),
     onResolverStatus: vi.fn(),
+    onDownloadJob: vi.fn(),
   },
 }));
 
@@ -34,6 +35,7 @@ describe("search view", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocked.onResolverStatus.mockResolvedValue(() => {});
+    mocked.onDownloadJob.mockResolvedValue(() => {});
     mocked.fetchPoster.mockResolvedValue("data:image/jpeg;base64,abc");
   });
 
@@ -130,7 +132,7 @@ describe("search view", () => {
     mocked.searchAnime.mockResolvedValue([RESULT]);
     mocked.loadAnime.mockResolvedValue({
       synopsis: "A wizard guild in the Kingdom of Fiore.",
-      episodes: [{ number: 1, airDate: "2018-06-11" }],
+      episodes: [{ number: 1, session: "session-one", airDate: "2018-06-11" }],
     });
     render(<SearchView />);
 

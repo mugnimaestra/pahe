@@ -1,3 +1,4 @@
+mod download;
 mod library;
 mod poster;
 mod probe;
@@ -7,10 +8,11 @@ mod settings;
 
 use std::path::{Path, PathBuf};
 
+use download::{Job as DownloadJob, Request as DownloadRequest};
 use library::{Library, LibraryAnime};
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 fn get_settings(store: tauri::State<'_, Store>) -> Settings {
@@ -92,6 +94,73 @@ async fn enrich_library(
         .await
 }
 
+/// Starts one Episode's Download job and returns it immediately.
+///
+/// The Source is resolved inside the job, never here, because a CDN URL expires
+/// before a queued job would run.
+#[tauri::command]
+async fn start_download(
+    app: tauri::AppHandle,
+    request: DownloadRequest,
+) -> Result<DownloadJob, String> {
+    if request.anime_id.trim().is_empty()
+        || request.session.trim().is_empty()
+        || request.title.trim().is_empty()
+    {
+        return Err("Open the Anime again and pick an Episode.".to_owned());
+    }
+
+    let request = DownloadRequest {
+        quality: match request.quality.trim() {
+            "" => "1080p".to_owned(),
+            quality => quality.to_owned(),
+        },
+        ..request
+    };
+    let job = DownloadJob::new(&request);
+    let folder = PathBuf::from(app.state::<Store>().get().library_folder);
+
+    let _ = app.emit(download::EVENT, &job);
+
+    let handle = app.clone();
+    let started = job.clone();
+    tauri::async_runtime::spawn(async move {
+        let base_url = handle.state::<Store>().get().base_url;
+        let resolver = handle.state::<Resolver>();
+        let quality = request.quality.clone();
+        let anime_id = request.anime_id.clone();
+        let session = request.session.clone();
+
+        let finished = download::run(
+            started,
+            &request,
+            &folder,
+            &download::Disk,
+            || async move {
+                resolver
+                    .resolve_source(&base_url, &anime_id, &session, &quality)
+                    .await
+                    .map(|source| download::Resolved {
+                        cdn_url: source.cdn_url,
+                        quality: source.quality,
+                        group: source.group,
+                    })
+                    .map_err(|failure| failure.message)
+            },
+            |job| {
+                let _ = handle.emit(download::EVENT, job);
+            },
+        )
+        .await;
+
+        if finished.state == download::JobState::Completed {
+            let _ = handle.state::<Library>().refresh(&folder);
+        }
+    });
+
+    Ok(job)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -140,7 +209,8 @@ pub fn run() {
             load_anime,
             fetch_poster,
             load_library,
-            enrich_library
+            enrich_library,
+            start_download
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");

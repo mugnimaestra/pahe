@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../ipc/client", () => ({
@@ -7,6 +7,8 @@ vi.mock("../ipc/client", () => ({
     fetchPoster: vi.fn(),
     loadAnime: vi.fn(),
     onResolverStatus: vi.fn(),
+    onDownloadJob: vi.fn(),
+    startDownload: vi.fn(),
   },
 }));
 
@@ -14,6 +16,7 @@ import AnimeDetailView from "./AnimeDetailView";
 import {
   ipc,
   type AnimeDetail,
+  type DownloadJob,
   type ResolverStatus,
   type SearchResult,
 } from "../ipc/client";
@@ -32,20 +35,47 @@ const SYNOPSIS = "A wizard guild in the Kingdom of Fiore.";
 const DETAIL: AnimeDetail = {
   synopsis: SYNOPSIS,
   episodes: [
-    { number: 1, airDate: "2018-06-11" },
-    { number: 2, airDate: null },
+    { number: 1, session: "session-one", airDate: "2018-06-11" },
+    { number: 2, session: "session-two", airDate: null },
   ],
 };
+
+let emitDownload: ((job: DownloadJob) => void) | undefined;
+
+function job(overrides: Partial<DownloadJob> = {}): DownloadJob {
+  return {
+    id: "job-1",
+    animeId: RESULT.animeId,
+    episode: 1,
+    quality: "1080p",
+    state: "running",
+    progress: null,
+    error: null,
+    ...overrides,
+  };
+}
 
 function renderDetail(onBack = vi.fn()) {
   render(<AnimeDetailView result={RESULT} onBack={onBack} />);
   return onBack;
 }
 
+async function download(jobToEmit: DownloadJob) {
+  await waitFor(() => expect(emitDownload).toBeDefined());
+  await act(async () => {
+    emitDownload?.(jobToEmit);
+  });
+}
+
 describe("anime detail view", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    emitDownload = undefined;
     mocked.onResolverStatus.mockResolvedValue(() => {});
+    mocked.onDownloadJob.mockImplementation(async (handler) => {
+      emitDownload = handler;
+      return () => {};
+    });
     mocked.fetchPoster.mockResolvedValue("data:image/webp;base64,abc");
   });
 
@@ -131,5 +161,140 @@ describe("anime detail view", () => {
     );
 
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers a Download control and a 1080p Quality on every Episode", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    renderDetail();
+
+    expect(
+      await screen.findByRole("button", { name: "Download Episode 1" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Download Episode 2" }),
+    ).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Quality for Episode 1") as HTMLSelectElement)
+        .value,
+    ).toBe("1080p");
+  });
+
+  it("starts a 1080p Download for the Episode and its Session", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.startDownload.mockResolvedValue(job());
+    renderDetail();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Download Episode 1" }),
+    );
+
+    await waitFor(() =>
+      expect(mocked.startDownload).toHaveBeenCalledWith({
+        animeId: RESULT.animeId,
+        title: RESULT.title,
+        episode: 1,
+        session: "session-one",
+        quality: "1080p",
+      }),
+    );
+  });
+
+  it("sends a chosen Quality override", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.startDownload.mockResolvedValue(job({ quality: "720p" }));
+    renderDetail();
+
+    fireEvent.change(
+      await screen.findByLabelText("Quality for Episode 1"),
+      { target: { value: "720p" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Download Episode 1" }));
+
+    await waitFor(() =>
+      expect(mocked.startDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ episode: 1, quality: "720p" }),
+      ),
+    );
+  });
+
+  it("shows preparing while the Source is resolved", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    renderDetail();
+
+    await download(job());
+
+    expect(await screen.findByText("Preparing…")).toBeTruthy();
+  });
+
+  it("shows progress as bytes, speed, and ETA", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    renderDetail();
+
+    await download(
+      job({
+        progress: {
+          bytes: 42_500_000,
+          total: 135_000_000,
+          speed: 8_500_000,
+          etaSeconds: 11,
+        },
+      }),
+    );
+
+    expect(
+      await screen.findByText("42.5 MB / 135.0 MB · 8.5 MB/s · 11s left"),
+    ).toBeTruthy();
+  });
+
+  it("shows a completed Download", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    renderDetail();
+
+    await download(
+      job({
+        state: "completed",
+        progress: {
+          bytes: 135_000_000,
+          total: 135_000_000,
+          speed: null,
+          etaSeconds: null,
+        },
+      }),
+    );
+
+    expect(await screen.findByText("Saved to the Library.")).toBeTruthy();
+  });
+
+  it("shows why a Download job failed", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    renderDetail();
+
+    await download(
+      job({
+        state: "failed",
+        error:
+          "Every download Source for this Episode is dead. kwik did not redirect.",
+      }),
+    );
+
+    expect(
+      (await screen.findByRole("alert")).textContent,
+    ).toContain("Every download Source for this Episode is dead.");
+  });
+
+  it("shows why a Download could not start", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.startDownload.mockRejectedValue(
+      "Open the Anime again and pick an Episode.",
+    );
+    renderDetail();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Download Episode 1" }),
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Open the Anime again and pick an Episode.",
+    );
   });
 });

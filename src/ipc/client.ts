@@ -25,6 +25,7 @@ export interface ResolverFailure {
 
 export interface Episode {
   number: number;
+  session: string;
   airDate: string | null;
 }
 
@@ -44,6 +45,34 @@ export type ResolverPhase = "idle" | "challenge";
 
 export interface ResolverStatus {
   state: ResolverPhase;
+}
+
+export type DownloadState = "queued" | "running" | "completed" | "failed";
+
+export interface DownloadProgress {
+  bytes: number;
+  total: number | null;
+  /** Bytes per second. */
+  speed: number | null;
+  etaSeconds: number | null;
+}
+
+export interface DownloadJob {
+  id: string;
+  animeId: string;
+  episode: number;
+  quality: string;
+  state: DownloadState;
+  progress: DownloadProgress | null;
+  error: string | null;
+}
+
+export interface DownloadRequest {
+  animeId: string;
+  title: string;
+  episode: number;
+  session: string;
+  quality: string;
 }
 
 /**
@@ -66,6 +95,11 @@ export const ipc = {
   /** Caches Anime metadata for Library items; rejects only when the index cannot be saved. */
   enrichLibrary: (): Promise<LibraryAnime[]> =>
     invoke<LibraryAnime[]>("enrich_library"),
+  /** Starts a Download job and returns its initial state; progress arrives as events. */
+  startDownload: (request: DownloadRequest): Promise<DownloadJob> =>
+    invoke<DownloadJob>("start_download", { request }),
+  onDownloadJob: (handler: (job: DownloadJob) => void): Promise<UnlistenFn> =>
+    listen<DownloadJob>("download://job", (event) => handler(event.payload)),
   onResolverStatus: (
     handler: (status: ResolverStatus) => void,
   ): Promise<UnlistenFn> =>

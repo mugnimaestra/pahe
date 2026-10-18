@@ -11,6 +11,7 @@ vi.mock("./ipc/client", () => ({
     loadLibrary: vi.fn(),
     enrichLibrary: vi.fn(),
     onResolverStatus: vi.fn(),
+    onDownloadJob: vi.fn(),
   },
 }));
 
@@ -28,6 +29,7 @@ describe("app shell", () => {
     vi.resetAllMocks();
     mocked.getSettings.mockResolvedValue(SETTINGS);
     mocked.onResolverStatus.mockResolvedValue(() => {});
+    mocked.onDownloadJob.mockResolvedValue(() => {});
     mocked.loadLibrary.mockResolvedValue([]);
     mocked.enrichLibrary.mockResolvedValue([]);
   });

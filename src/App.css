@@ -313,12 +313,55 @@ button:disabled {
 
 .episodes li {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 16px;
   padding: 8px 0;
   border-bottom: 1px solid #26272c;
 }
 
 .episodes .muted {
+  flex: 1;
   font-size: 13px;
+}
+
+.episode-download {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.episode-download select,
+.episode-download button {
+  padding: 5px 10px;
+  border: 1px solid #35363d;
+  border-radius: 6px;
+  background: #15161a;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.episode-download button:not(:disabled):hover {
+  border-color: #4a4b54;
+}
+
+.download-progress,
+.download-done,
+.download-error {
+  font-size: 13px;
+}
+
+.download-progress {
+  color: #9a9ca6;
+}
+
+.download-done {
+  color: #7bd88f;
+}
+
+.download-error {
+  color: #ff8f8f;
 }
