@@ -1,4 +1,5 @@
 import { useState } from "react";
+import SearchView from "./views/SearchView";
 import SettingsView from "./views/SettingsView";
 import "./App.css";
 
@@ -46,10 +47,12 @@ export default function App() {
       </aside>
 
       <main className="content">
-        {view === "settings" ? (
+        {view === "search" ? (
+          <SearchView />
+        ) : view === "settings" ? (
           <SettingsView />
         ) : (
-          <section className="view">
+          <section className="view view-quiet">
             <h1>{current.label}</h1>
             <p className="muted">{current.description}</p>
           </section>

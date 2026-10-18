@@ -1,11 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ipc } from "../ipc/client";
-
-function messageOf(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  return "Something went wrong.";
-}
+import { messageOf } from "../message";
 
 export default function SettingsView() {
   const [loaded, setLoaded] = useState(false);
@@ -53,7 +48,7 @@ export default function SettingsView() {
   }
 
   return (
-    <section className="view">
+    <section className="view view-settings">
       <h1>Settings</h1>
 
       {!loaded ? (
@@ -75,7 +70,7 @@ export default function SettingsView() {
           <p className="muted">
             The animepahe origin pahe talks to. Default: https://animepahe.pw
           </p>
-          <button type="submit" disabled={saving}>
+          <button className="button" type="submit" disabled={saving}>
             {saving ? "Saving…" : "Save"}
           </button>
           {status?.kind === "saved" && <p role="status">{status.message}</p>}

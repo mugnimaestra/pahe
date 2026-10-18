@@ -147,3 +147,86 @@ button:disabled {
   margin: 0;
   color: #ff8f8f;
 }
+
+.search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 28px 0 20px;
+}
+
+.search-form label {
+  font-weight: 600;
+}
+
+.search-row {
+  display: flex;
+  gap: 10px;
+}
+
+.search-row input {
+  flex: 1;
+  max-width: 460px;
+  padding: 9px 11px;
+  border: 1px solid #35363d;
+  border-radius: 7px;
+  background: #15161a;
+  color: inherit;
+  font: inherit;
+}
+
+.search-row input:focus {
+  outline: 2px solid #7c5cff;
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.search-row button {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 7px;
+  background: #7c5cff;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.challenge {
+  color: #f0c46c;
+}
+
+.results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 18px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+  max-width: 900px;
+}
+
+.results li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.results img,
+.poster-empty {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #1d1e23;
+}
+
+.result-title {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.results .muted {
+  font-size: 13px;
+}

@@ -6,6 +6,8 @@ vi.mock("./ipc/client", () => ({
   ipc: {
     getSettings: vi.fn(),
     saveSettings: vi.fn(),
+    searchAnime: vi.fn(),
+    onResolverStatus: vi.fn(),
   },
 }));
 
@@ -18,6 +20,7 @@ describe("app shell", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocked.getSettings.mockResolvedValue({ baseUrl: "https://animepahe.pw" });
+    mocked.onResolverStatus.mockResolvedValue(() => {});
   });
 
   it("renders the navigation between the main views", () => {

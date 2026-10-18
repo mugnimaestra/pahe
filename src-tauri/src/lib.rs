@@ -1,5 +1,9 @@
+mod probe;
+mod proxy;
+mod resolver;
 mod settings;
 
+use resolver::{Resolver, SearchFailure, SearchResult};
 use settings::{Settings, Store};
 use tauri::Manager;
 
@@ -9,8 +13,24 @@ fn get_settings(store: tauri::State<'_, Store>) -> Settings {
 }
 
 #[tauri::command]
-fn save_settings(store: tauri::State<'_, Store>, settings: Settings) -> Result<Settings, String> {
-    store.save(settings)
+async fn save_settings(
+    store: tauri::State<'_, Store>,
+    resolver: tauri::State<'_, Resolver>,
+    settings: Settings,
+) -> Result<Settings, String> {
+    let saved = store.save(settings)?;
+    resolver.base_url_changed(&saved.base_url).await;
+    Ok(saved)
+}
+
+#[tauri::command]
+async fn search_anime(
+    store: tauri::State<'_, Store>,
+    resolver: tauri::State<'_, Resolver>,
+    query: String,
+) -> Result<Vec<SearchResult>, SearchFailure> {
+    let base_url = store.get().base_url;
+    resolver.search(&base_url, &query).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -31,9 +51,14 @@ pub fn run() {
     builder
         .setup(|app| {
             app.manage(Store::load(app.path().app_data_dir()?));
+            app.manage(Resolver::new(app.handle().clone()));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_settings, save_settings])
+        .invoke_handler(tauri::generate_handler![
+            get_settings,
+            save_settings,
+            search_anime
+        ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");
 }
