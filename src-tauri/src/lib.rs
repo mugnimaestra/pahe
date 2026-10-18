@@ -1,5 +1,6 @@
 mod download;
 mod library;
+mod player;
 mod poster;
 mod probe;
 mod proxy;
@@ -7,15 +8,26 @@ mod queue;
 mod resolver;
 mod settings;
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use download::Request as DownloadRequest;
-use library::{Library, LibraryAnime, OwnedEpisode};
+use library::{Library, LibraryAnime, LibraryItem, OwnedEpisode};
 use queue::{Enqueued, Queue, QueueSnapshot};
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
 use tauri::{Emitter, Manager};
+
+/// Allows the Library folder through the asset protocol, so the player can
+/// load a Library item's file in the main window. The scope matches real
+/// paths, so a symlinked folder is allowed as its target.
+fn allow_library<R: tauri::Runtime>(manager: &impl Manager<R>, folder: &Path) {
+    let folder = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    if let Err(error) = manager.asset_protocol_scope().allow_directory(folder, true) {
+        eprintln!("asset scope: {error}");
+    }
+}
 
 #[tauri::command]
 fn get_settings(store: tauri::State<'_, Store>) -> Settings {
@@ -24,12 +36,14 @@ fn get_settings(store: tauri::State<'_, Store>) -> Settings {
 
 #[tauri::command]
 async fn save_settings(
+    app: tauri::AppHandle,
     store: tauri::State<'_, Store>,
     resolver: tauri::State<'_, Resolver>,
     settings: Settings,
 ) -> Result<Settings, String> {
     let saved = store.save(settings)?;
     resolver.base_url_changed(&saved.base_url).await;
+    allow_library(&app, Path::new(&saved.library_folder));
     Ok(saved)
 }
 
@@ -164,6 +178,28 @@ fn owned_episodes(
     library.owned(&anime_id, &title)
 }
 
+/// Every Library item of an Anime, for the Library's Episode list.
+#[tauri::command]
+fn library_items(
+    library: tauri::State<'_, Library>,
+    anime_id: Option<String>,
+    title: String,
+) -> Vec<LibraryItem> {
+    library.items(anime_id.as_deref().unwrap_or_default(), &title)
+}
+
+/// Rejects with a plain-language message when a Library item's file is gone.
+#[tauri::command]
+fn check_library_file(library: tauri::State<'_, Library>, path: String) -> Result<(), String> {
+    library.file(&path).map(|_| ())
+}
+
+/// Hands a Library item's file to the OS default player.
+#[tauri::command]
+fn open_externally(library: tauri::State<'_, Library>, path: String) -> Result<(), String> {
+    player::open_externally(&library.file(&path)?)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -190,6 +226,8 @@ pub fn run() {
                 .unwrap_or_else(|_| PathBuf::from("animepahe"));
 
             app.manage(Store::load(app_data_dir.clone(), library_folder));
+            let folder = app.state::<Store>().get().library_folder;
+            allow_library(app, Path::new(&folder));
             let resolver = Resolver::new(app.handle().clone());
             let mut challenge = resolver.challenge_watch();
             app.manage(resolver);
@@ -292,7 +330,10 @@ pub fn run() {
             load_queue,
             start_queue,
             resume_download,
-            owned_episodes
+            owned_episodes,
+            library_items,
+            check_library_file,
+            open_externally
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");

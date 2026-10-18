@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invoke, listen } = vi.hoisted(() => ({
+const { invoke, listen, convertFileSrc } = vi.hoisted(() => ({
   invoke: vi.fn(),
   listen: vi.fn(),
+  convertFileSrc: vi.fn(),
 }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke, convertFileSrc }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 
 import { ipc } from "./client";
@@ -13,6 +14,7 @@ describe("ipc", () => {
   beforeEach(() => {
     invoke.mockReset();
     listen.mockReset();
+    convertFileSrc.mockReset();
   });
 
   it("reads settings through the get_settings command", async () => {
@@ -192,6 +194,59 @@ describe("ipc", () => {
       animeId: "anime-id",
       title: "Fairy Tail",
     });
+  });
+
+  it("lists a Library Anime's items through the library_items command", async () => {
+    const items = [
+      {
+        animeId: null,
+        titleSlug: "Seitokai_Yakuindomo",
+        poster: null,
+        episode: 1,
+        version: 1,
+        quality: "1080p",
+        group: "B-Bass",
+        path: "/Users/me/Downloads/animepahe/AnimePahe_Seitokai_Yakuindomo_-_01_BD_1080p_B-Bass.mp4",
+      },
+    ];
+    invoke.mockResolvedValue(items);
+
+    await expect(
+      ipc.libraryItems(null, "Seitokai Yakuindomo"),
+    ).resolves.toEqual(items);
+    expect(invoke).toHaveBeenCalledWith("library_items", {
+      animeId: null,
+      title: "Seitokai Yakuindomo",
+    });
+  });
+
+  it("checks a Library item's file through the check_library_file command", async () => {
+    invoke.mockResolvedValue(null);
+
+    await ipc.checkLibraryFile("/library/one.mp4");
+
+    expect(invoke).toHaveBeenCalledWith("check_library_file", {
+      path: "/library/one.mp4",
+    });
+  });
+
+  it("opens a Library item externally through the open_externally command", async () => {
+    invoke.mockResolvedValue(null);
+
+    await ipc.openExternally("/library/one.mp4");
+
+    expect(invoke).toHaveBeenCalledWith("open_externally", {
+      path: "/library/one.mp4",
+    });
+  });
+
+  it("turns a Library item's path into a webview file URL", () => {
+    convertFileSrc.mockReturnValue("asset://localhost/%2Flibrary%2Fone.mp4");
+
+    expect(ipc.libraryFileUrl("/library/one.mp4")).toBe(
+      "asset://localhost/%2Flibrary%2Fone.mp4",
+    );
+    expect(convertFileSrc).toHaveBeenCalledWith("/library/one.mp4");
   });
 
   it("subscribes to Download job events", async () => {

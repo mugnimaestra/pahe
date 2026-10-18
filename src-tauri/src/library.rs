@@ -149,6 +149,48 @@ impl Library {
         })
     }
 
+    /// Every Library item of an Anime, in Episode then Quality order. The
+    /// player needs the items themselves, not just which Episodes are owned.
+    pub fn items(&self, anime_id: &str, title: &str) -> Vec<LibraryItem> {
+        let items = self.items.lock().expect("library lock poisoned");
+        let mut wanted: Vec<LibraryItem> = items
+            .iter()
+            .filter(|item| belongs_to(item, anime_id, title))
+            .cloned()
+            .collect();
+        wanted.sort_by(|left, right| {
+            left.episode
+                .total_cmp(&right.episode)
+                .then_with(|| left.quality.cmp(&right.quality))
+        });
+
+        wanted
+    }
+
+    /// The file behind a Library item, when the index knows the item and the
+    /// file is still on disk. Errors are plain language: a path the index does
+    /// not hold never reaches the OS, and a deleted file is not a silent start.
+    pub fn file(&self, path: &str) -> Result<PathBuf, String> {
+        let known = self
+            .items
+            .lock()
+            .expect("library lock poisoned")
+            .iter()
+            .any(|item| item.path == path);
+        if !known {
+            return Err("This file is not part of the Library. Scan the Library again.".to_owned());
+        }
+        let file = PathBuf::from(path);
+        if !file.is_file() {
+            return Err(
+                "This Episode's file is missing from the Library folder. Scan the Library again or download it again."
+                    .to_owned(),
+            );
+        }
+
+        Ok(file)
+    }
+
     /// Adopts matching files, drops entries whose files are gone, and writes
     /// the index. A missing or unreadable folder is an explicit error.
     pub fn refresh(&self, folder: &Path) -> Result<Vec<LibraryAnime>, String> {
@@ -655,6 +697,50 @@ mod tests {
 
         assert_eq!(groups[0].episode_count, 1);
         assert_eq!(shelf.stored().items.len(), 2);
+    }
+
+    #[test]
+    fn lists_an_animes_items_in_episode_and_quality_order() {
+        let shelf = Shelf::new();
+        shelf.touch(TWO);
+        shelf.touch(ONE);
+        shelf.touch("AnimePahe_Seitokai_ni_mo_Ana_wa_Aru_-_01_720p_ADN.mp4");
+        shelf.touch("AnimePahe_Another_Show_-_01_720p_Group.mp4");
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+
+        let items = library.items("", "Seitokai ni mo Ana wa Aru");
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (item.episode, item.quality.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(1.0, "1080p"), (1.0, "720p"), (2.0, "1080p")]
+        );
+        assert!(items.iter().all(|item| Path::new(&item.path).is_file()));
+    }
+
+    #[test]
+    fn resolves_a_library_items_file_and_reports_a_missing_one() {
+        let shelf = Shelf::new();
+        shelf.touch(ONE);
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+        let path = library.items("", "Seitokai ni mo Ana wa Aru")[0]
+            .path
+            .clone();
+
+        assert_eq!(library.file(&path).unwrap(), PathBuf::from(&path));
+
+        fs::remove_file(&path).unwrap();
+        let missing = library.file(&path).unwrap_err();
+        assert!(missing.contains("missing"), "{missing}");
+
+        let unknown = library
+            .file("/nowhere/AnimePahe_One_-_01_1080p_ADN.mp4")
+            .unwrap_err();
+        assert!(unknown.contains("not part of the Library"), "{unknown}");
     }
 
     #[tokio::test]

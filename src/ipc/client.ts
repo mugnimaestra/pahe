@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export interface Settings {
@@ -103,6 +103,18 @@ export interface OwnedEpisode {
   quality: string;
 }
 
+/** A downloaded Episode file the Library knows about. */
+export interface LibraryItem {
+  animeId: string | null;
+  titleSlug: string;
+  poster: string | null;
+  episode: number;
+  version: number;
+  quality: string;
+  group: string;
+  path: string;
+}
+
 /** Every Download job, plus whether the worker runs and a Challenge holds it. */
 export interface QueueSnapshot {
   jobs: DownloadJob[];
@@ -137,6 +149,20 @@ export const ipc = {
   /** Queues Download jobs, skipping Episodes the Library or an active job owns. */
   enqueueDownloads: (requests: DownloadRequest[]): Promise<Enqueued> =>
     invoke<Enqueued>("enqueue_downloads", { requests }),
+  /** Every Library item of an Anime, in Episode then Quality order. */
+  libraryItems: (
+    animeId: string | null,
+    title: string,
+  ): Promise<LibraryItem[]> =>
+    invoke<LibraryItem[]>("library_items", { animeId, title }),
+  /** Rejects with a plain-language message when the item's file is gone. */
+  checkLibraryFile: (path: string): Promise<void> =>
+    invoke<void>("check_library_file", { path }),
+  /** Hands a Library item's file to the OS default player. */
+  openExternally: (path: string): Promise<void> =>
+    invoke<void>("open_externally", { path }),
+  /** A `src` the webview may load for a Library item's file. */
+  libraryFileUrl: (path: string): string => convertFileSrc(path),
   /** The current Download jobs in enqueue order. */
   loadQueue: (): Promise<QueueSnapshot> => invoke<QueueSnapshot>("load_queue"),
   /** Starts the restored queue; restored jobs never run on launch by themselves. */
