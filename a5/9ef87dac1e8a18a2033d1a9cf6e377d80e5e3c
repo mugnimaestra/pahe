@@ -1,0 +1,26 @@
+src/App.css
+  h_2d220f5439def3 381,394,409-440
+src/views/LibraryAnimeView.test.tsx
+  h_2d220f5439def3 1-114
+src/views/LibraryAnimeView.tsx
+  h_2d220f5439def3 1-95
+src/views/LibraryView.test.tsx
+  h_2d220f5439def3 2,10-13,18,109-150
+src/views/LibraryView.tsx
+  h_2d220f5439def3 5,14,45-53,75-87
+src/views/PlayerView.test.tsx
+  h_2d220f5439def3 1-136
+src/views/PlayerView.tsx
+  h_2d220f5439def3 1-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a59ef87dac1e8a18a2033d1a9cf6e377d80e5e3c",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
