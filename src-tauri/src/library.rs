@@ -182,8 +182,10 @@ impl Library {
 }
 
 /// Parses `AnimePahe_<title_slug>_-_<NN>_<quality>_<group>.mp4`, where the
-/// Episode may carry a version (`01v2`) or a decimal (`12.5`). Partial files
-/// and anything else are ignored.
+/// Episode may carry a version (`01v2`) or a decimal (`12.5`). animepahe also
+/// inserts a medium token before the Quality on some CDN files (`BD`), so a
+/// four-token tail is accepted when its third token is a resolution. Partial
+/// files and anything else are ignored.
 pub fn parse_filename(name: &str) -> Option<ParsedName> {
     if !name.to_ascii_lowercase().ends_with(EXTENSION) {
         return None;
@@ -195,13 +197,19 @@ pub fn parse_filename(name: &str) -> Option<ParsedName> {
         return None;
     }
 
-    let mut tokens = tail.split('_');
-    let episode = tokens.next()?;
-    let quality = tokens.next()?;
-    let group = tokens.next()?;
-    if tokens.next().is_some() || quality.is_empty() || group.is_empty() {
+    let tokens: Vec<&str> = tail.split('_').collect();
+    if !(3..=4).contains(&tokens.len()) || tokens.iter().any(|token| token.is_empty()) {
         return None;
     }
+    let (episode, group) = (tokens[0], tokens[tokens.len() - 1]);
+    let quality = if tokens.len() == 4 {
+        if !is_resolution(tokens[2]) {
+            return None;
+        }
+        tokens[2]
+    } else {
+        tokens[1]
+    };
 
     let (episode, version) = parse_episode(episode)?;
 
@@ -212,6 +220,15 @@ pub fn parse_filename(name: &str) -> Option<ParsedName> {
         quality: quality.to_owned(),
         group: group.to_owned(),
     })
+}
+
+fn is_resolution(token: &str) -> bool {
+    token
+        .strip_suffix('p')
+        .or_else(|| token.strip_suffix('P'))
+        .is_some_and(|digits| {
+            !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 fn parse_episode(token: &str) -> Option<(f64, u32)> {
@@ -526,6 +543,26 @@ mod tests {
         ] {
             assert_eq!(parse_filename(name), None, "{name} should be ignored");
         }
+    }
+
+    #[test]
+    fn adopts_a_cdn_filename_that_names_its_medium() {
+        let shelf = Shelf::new();
+        shelf.touch("AnimePahe_Seitokai_Yakuindomo_-_01_BD_1080p_B-Bass.mp4");
+
+        let groups = shelf.library().refresh(&shelf.folder).unwrap();
+
+        assert_eq!(
+            groups,
+            vec![LibraryAnime {
+                anime_id: None,
+                title: "Seitokai Yakuindomo".to_owned(),
+                poster: None,
+                episode_count: 1,
+            }]
+        );
+        assert_eq!(shelf.stored().items[0].quality, "1080p");
+        assert_eq!(shelf.stored().items[0].group, "B-Bass");
     }
 
     #[test]
