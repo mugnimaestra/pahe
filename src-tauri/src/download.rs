@@ -488,9 +488,10 @@ mod tests {
         }
     }
 
-    /// A one-request-at-a-time HTTP server. `body` may be shorter than
-    /// `declared`, which simulates a connection that dropped mid-file.
-    async fn serve(declared: u64, body: Vec<u8>, file_name: &str) -> String {
+    /// A one-request-at-a-time HTTP server. With `dropped`, a GET sends one
+    /// complete chunk and closes before the terminating chunk, which simulates
+    /// a connection that dropped mid-file; `declared` stays the HEAD size.
+    async fn serve(declared: u64, body: Vec<u8>, file_name: &str, dropped: bool) -> String {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let address = listener.local_addr().unwrap();
         let file_name = file_name.to_owned();
@@ -515,13 +516,25 @@ mod tests {
                         }
                     }
                     let request = String::from_utf8_lossy(&buffer);
-                    let mut response = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-length: {declared}\r\nconnection: close\r\n\r\n"
-                    )
-                    .into_bytes();
-                    if request.starts_with("GET") {
+                    let get = request.starts_with("GET");
+                    let response = if dropped && get {
+                        let mut response =
+                            b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n"
+                                .to_vec();
+                        response.extend_from_slice(format!("{:x}\r\n", body.len()).as_bytes());
                         response.extend_from_slice(&body);
-                    }
+                        response.extend_from_slice(b"\r\n");
+                        response
+                    } else {
+                        let mut response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-length: {declared}\r\nconnection: close\r\n\r\n"
+                        )
+                        .into_bytes();
+                        if get {
+                            response.extend_from_slice(&body);
+                        }
+                        response
+                    };
                     let _ = socket.write_all(&response).await;
                     let _ = socket.shutdown().await;
                 });
@@ -560,6 +573,7 @@ mod tests {
             body.len() as u64,
             body.clone(),
             "AnimePahe_One_-_04_1080p_ADN.mp4",
+            false,
         )
         .await;
         let dir = TempDir::new().unwrap();
@@ -587,6 +601,7 @@ mod tests {
             body.len() as u64,
             body.clone(),
             "AnimePahe_One_-_04_1080p_ADN.mp4",
+            false,
         )
         .await;
         let dir = TempDir::new().unwrap();
@@ -614,7 +629,13 @@ mod tests {
     #[tokio::test]
     async fn insufficient_disk_space_fails_before_writing() {
         let body = vec![1u8; 8 * 1024 * 1024];
-        let url = serve(body.len() as u64, body, "AnimePahe_One_-_04_1080p_ADN.mp4").await;
+        let url = serve(
+            body.len() as u64,
+            body,
+            "AnimePahe_One_-_04_1080p_ADN.mp4",
+            false,
+        )
+        .await;
         let dir = TempDir::new().unwrap();
         let folder = dir.path().join("animepahe");
 
@@ -627,7 +648,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_connection_keeps_the_part_file() {
-        let url = serve(1_000, vec![3u8; 100], "AnimePahe_One_-_04_1080p_ADN.mp4").await;
+        let url = serve(
+            1_000,
+            vec![3u8; 100],
+            "AnimePahe_One_-_04_1080p_ADN.mp4",
+            true,
+        )
+        .await;
         let dir = TempDir::new().unwrap();
         let folder = dir.path().to_path_buf();
 
