@@ -1,0 +1,32 @@
+src-tauri/src/lib.rs
+  h_2d220f5439def3 1,8-10,65-94,112-120,122-133,141-143
+src-tauri/src/library.rs
+  h_2d220f5439def3 1-776
+src-tauri/src/settings.rs
+  h_2d220f5439def3 13,20,33-36,38-42,45-50,65,95-103,110-113,115-122,126,129-135,144,148-168,179,192-197,210,222,224-248,250,252-253,257-268
+src/App.test.tsx
+  h_2d220f5439def3 11-12,21-24,29,31-32,45-55,74,85
+src/App.tsx
+  h_2d220f5439def3 2,53-54
+src/ipc/client.test.ts
+  h_2d220f5439def3 19-22,26,32-35,82-111
+src/ipc/client.ts
+  h_2d220f5439def3 6,36-42,63-68
+src/views/LibraryView.test.tsx
+  h_2d220f5439def3 1-105
+src/views/LibraryView.tsx
+  h_2d220f5439def3 1-77
+src/views/SettingsView.tsx
+  h_2d220f5439def3 2,6,18-19,33-34,39-40,53,66-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5aa7ddd6c7f139eacb61a682bda82ac228b8b5a",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
