@@ -1,0 +1,16 @@
+src/views/SearchView.test.tsx
+  h_2d220f5439def3 111-121
+src/views/SearchView.tsx
+  h_2d220f5439def3 5,18-25,31-33,35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd69d49ea32642df6e9845e7d95dae3b48c0e9ae",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
