@@ -1,0 +1,24 @@
+src/App.css
+  h_2d220f5439def3 353-354,366-369,380-381,392-393,428-431
+src/App.test.tsx
+  h_2d220f5439def3 16-17,38-42
+src/ipc/client.test.ts
+  h_2d220f5439def3 161-162,164,168-183
+src/ipc/client.ts
+  h_2d220f5439def3 50-56,106-113,141-146
+src/views/QueueView.test.tsx
+  h_2d220f5439def3 2,8-10,16-21,26,42-45,57-58,63-66,76-87,89,111-115,145,176-282
+src/views/QueueView.tsx
+  h_2d220f5439def3 2-4,14,16-31,34,39-43,47,52,55,63,68-69,80-86,91-100,109-116,125-137,158-161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e85e096a45dbb665044831ca1361012f3e00b1d9",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
