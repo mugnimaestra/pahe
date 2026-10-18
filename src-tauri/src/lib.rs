@@ -41,7 +41,11 @@ async fn fetch_poster(
     url: String,
 ) -> Result<String, String> {
     let base_url = store.get().base_url;
-    resolver.poster(&base_url, &url).await
+    let result = resolver.poster(&base_url, &url).await;
+    if let Err(error) = &result {
+        eprintln!("poster {url}: {error}");
+    }
+    result
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -10,7 +10,7 @@ use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time::{Instant, sleep, timeout};
 use url::Url;
 
-use crate::poster::Posters;
+use crate::poster::{self, Posters};
 use crate::probe::{self, ProbeOutcome};
 use crate::proxy::{self, DohLookup, ProxyHandle};
 
@@ -88,6 +88,7 @@ pub struct Resolver {
     probe: Mutex<Option<(String, ProbeOutcome)>>,
     proxy: Mutex<Option<ProxyHandle>>,
     posters: Posters,
+    user_agent: Mutex<Option<String>>,
 }
 
 impl Resolver {
@@ -100,6 +101,7 @@ impl Resolver {
             probe: Mutex::new(None),
             proxy: Mutex::new(None),
             posters: Posters::new(),
+            user_agent: Mutex::new(None),
         }
     }
 
@@ -133,7 +135,14 @@ impl Resolver {
 
     /// The poster at `url` as a data URL, fetched through the local proxy when
     /// the probe reports a Poisoned resolver and directly when it is Clean.
+    ///
+    /// The poster host answers a plain HTTP client with a Cloudflare Challenge,
+    /// so the fetch borrows the Resolver's User-Agent and clearance cookies.
     pub async fn poster(&self, base_url: &str, url: &str) -> Result<String, String> {
+        if let Some(cached) = self.posters.cached(url) {
+            return Ok(cached);
+        }
+
         let proxy = match self.probe_outcome(base_url).await {
             ProbeOutcome::Poisoned => Some(
                 self.ensure_proxy()
@@ -143,7 +152,61 @@ impl Resolver {
             _ => None,
         };
 
-        self.posters.data_url(url, base_url, proxy.as_deref()).await
+        let window = {
+            let mut session = self.session.lock().await;
+            self.ensure_window(&mut session, base_url)
+                .await
+                .map_err(|failure| failure.message)?
+        };
+        let user_agent = self.user_agent(&window).await?;
+        // The poster host is a subdomain of the Base URL, so clearance lives on
+        // the parent domain. Wry's cookies_for_url compares domains exactly and
+        // misses those, so read the store and match the domain ourselves.
+        let cookie = cookie_header(&window, url)?;
+
+        self.posters
+            .data_url(
+                url,
+                poster::Browser {
+                    base_url,
+                    user_agent: &user_agent,
+                    cookie: cookie.as_deref(),
+                },
+                proxy.as_deref(),
+            )
+            .await
+    }
+
+    async fn user_agent(&self, window: &WebviewWindow) -> Result<String, String> {
+        if let Some(user_agent) = self.user_agent.lock().await.clone() {
+            return Ok(user_agent);
+        }
+
+        window
+            .eval("window.__paheUa = navigator.userAgent")
+            .map_err(|error| error.to_string())?;
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let poll = "JSON.stringify(window.__paheUa || null)";
+
+        while Instant::now() < deadline {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            window
+                .eval_with_callback(poll, move |value| {
+                    let _ = tx.send(value);
+                })
+                .map_err(|error| error.to_string())?;
+
+            if let Ok(Some(raw)) = timeout(Duration::from_millis(250), rx.recv()).await
+                && let Some(user_agent) = decode_user_agent(&raw)
+            {
+                *self.user_agent.lock().await = Some(user_agent.clone());
+                return Ok(user_agent);
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+
+        Err("The Resolver did not report its User-Agent.".to_owned())
     }
 
     /// Called when the Base URL changes: clears the probe cache, the Resolver
@@ -437,6 +500,48 @@ fn is_challenge(result: &FetchResult) -> bool {
                 || result.body.contains("challenge-platform")))
 }
 
+/// The cookies the Resolver holds for the poster URL, as a Cookie header.
+///
+/// Wry's `cookies_for_url` requires the cookie domain to equal the URL host,
+/// which drops the `animepahe.pw` clearance cookie for `i.animepahe.pw`, so the
+/// full jar is filtered here instead.
+fn cookie_header(window: &WebviewWindow, url: &str) -> Result<Option<String>, String> {
+    let url = Url::parse(url).map_err(|_| "The poster URL is not valid.".to_owned())?;
+    let host = url.host_str().unwrap_or_default();
+
+    let cookies = window
+        .cookies()
+        .map_err(|error| format!("could not read the Resolver cookies: {error}"))?;
+
+    let header = cookies
+        .iter()
+        .filter(|cookie| domain_matches(cookie.domain(), host))
+        .filter(|cookie| url.scheme() == "https" || !cookie.secure().unwrap_or(false))
+        .filter(|cookie| url.path().starts_with(cookie.path().unwrap_or("/")))
+        .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    Ok((!header.is_empty()).then_some(header))
+}
+
+fn domain_matches(domain: Option<&str>, host: &str) -> bool {
+    let Some(domain) = domain else {
+        return false;
+    };
+    let domain = domain.trim_start_matches('.');
+
+    !domain.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")))
+}
+
+fn decode_user_agent(raw: &str) -> Option<String> {
+    let inner = serde_json::from_str::<String>(raw.trim()).ok()?;
+    if inner == "null" {
+        return None;
+    }
+    serde_json::from_str::<String>(&inner).ok()
+}
+
 pub fn parse_search(body: &str, base_url: &str) -> Result<Vec<SearchResult>, SearchFailure> {
     let value: Value = serde_json::from_str(body)
         .map_err(|_| SearchFailure::failed("animepahe sent an unexpected search response."))?;
@@ -595,5 +700,29 @@ mod tests {
 
         assert!(decode_poll(&raw, "new").is_none());
         assert!(decode_poll("null", "new").is_none());
+    }
+
+    #[test]
+    fn reads_the_browser_user_agent_from_an_eval_callback() {
+        let raw =
+            serde_json::to_string(&serde_json::to_string("Mozilla/5.0 (Macintosh) pahe").unwrap())
+                .unwrap();
+
+        assert_eq!(
+            decode_user_agent(&raw).as_deref(),
+            Some("Mozilla/5.0 (Macintosh) pahe")
+        );
+        assert!(decode_user_agent("null").is_none());
+        assert!(decode_user_agent("not json").is_none());
+    }
+
+    #[test]
+    fn matches_a_cookie_domain_to_its_subdomains() {
+        assert!(domain_matches(Some("animepahe.pw"), "i.animepahe.pw"));
+        assert!(domain_matches(Some(".animepahe.pw"), "i.animepahe.pw"));
+        assert!(domain_matches(Some("i.animepahe.pw"), "i.animepahe.pw"));
+        assert!(!domain_matches(Some("animepahe.pw"), "notanimepahe.pw"));
+        assert!(!domain_matches(Some("other.example"), "i.animepahe.pw"));
+        assert!(!domain_matches(None, "i.animepahe.pw"));
     }
 }

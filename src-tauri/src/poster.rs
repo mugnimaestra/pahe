@@ -9,10 +9,15 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_CACHED: usize = 512;
 
-/// A browser user agent: the poster host rejects requests that look scripted.
-const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
-AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
 const ACCEPT: &str = "image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8";
+
+/// The Resolver's browser identity: the Base URL for the Referer, plus the
+/// User-Agent and cookies that carry its Cloudflare clearance.
+pub struct Browser<'a> {
+    pub base_url: &'a str,
+    pub user_agent: &'a str,
+    pub cookie: Option<&'a str>,
+}
 
 /// Fetches poster bytes and hands them to the UI as data URLs, cached by URL.
 pub struct Posters {
@@ -33,30 +38,32 @@ impl Posters {
     pub async fn data_url(
         &self,
         url: &str,
-        base_url: &str,
+        browser: Browser<'_>,
         proxy: Option<&str>,
     ) -> Result<String, String> {
-        if let Some(cached) = self
-            .cache
-            .lock()
-            .ok()
-            .and_then(|cache| cache.get(url).cloned())
-        {
+        if let Some(cached) = self.cached(url) {
             return Ok(cached);
         }
 
-        let data_url = fetch(url, base_url, proxy).await?;
+        let data_url = fetch(url, &browser, proxy).await?;
+        self.remember(url, &data_url);
+        Ok(data_url)
+    }
 
+    /// A cached poster, if this URL was already fetched.
+    pub fn cached(&self, url: &str) -> Option<String> {
+        self.cache.lock().ok()?.get(url).cloned()
+    }
+
+    fn remember(&self, url: &str, data_url: &str) {
         if let Ok(mut cache) = self.cache.lock() {
             // Poster URLs are finite per session; this only guards a very long
             // browsing run from holding every image in memory forever.
             if cache.len() >= MAX_CACHED {
                 cache.clear();
             }
-            cache.insert(url.to_owned(), data_url.clone());
+            cache.insert(url.to_owned(), data_url.to_owned());
         }
-
-        Ok(data_url)
     }
 }
 
@@ -66,11 +73,27 @@ impl Default for Posters {
     }
 }
 
-async fn fetch(url: &str, base_url: &str, proxy: Option<&str>) -> Result<String, String> {
+/// Turn an image response into the data URL the UI renders.
+pub fn data_url_of(content_type: &str, bytes: &[u8]) -> Result<String, String> {
+    let content_type = content_type.split(';').next().unwrap_or_default().trim();
+    if !content_type.starts_with("image/") {
+        return Err("the poster host did not answer with an image.".to_owned());
+    }
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err("the poster is too large to display.".to_owned());
+    }
+
+    Ok(format!(
+        "data:{content_type};base64,{}",
+        STANDARD.encode(bytes)
+    ))
+}
+
+async fn fetch(url: &str, browser: &Browser<'_>, proxy: Option<&str>) -> Result<String, String> {
     let mut builder = reqwest::Client::builder()
         .no_proxy()
         .timeout(FETCH_TIMEOUT)
-        .user_agent(USER_AGENT);
+        .user_agent(browser.user_agent);
     if let Some(proxy) = proxy {
         builder = builder.proxy(
             reqwest::Proxy::all(proxy)
@@ -81,10 +104,15 @@ async fn fetch(url: &str, base_url: &str, proxy: Option<&str>) -> Result<String,
         .build()
         .map_err(|error| format!("could not prepare the poster request: {error}"))?;
 
-    let response = client
+    let mut request = client
         .get(url)
-        .header(reqwest::header::REFERER, base_url)
-        .header(reqwest::header::ACCEPT, ACCEPT)
+        .header(reqwest::header::REFERER, browser.base_url)
+        .header(reqwest::header::ACCEPT, ACCEPT);
+    if let Some(cookie) = browser.cookie {
+        request = request.header(reqwest::header::COOKIE, cookie);
+    }
+
+    let response = request
         .send()
         .await
         .map_err(|error| format!("could not reach the poster host: {error}"))?;
@@ -100,25 +128,15 @@ async fn fetch(url: &str, base_url: &str, proxy: Option<&str>) -> Result<String,
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
-        .map(|value| value.split(';').next().unwrap_or_default().trim())
         .unwrap_or_default()
         .to_owned();
-    if !content_type.starts_with("image/") {
-        return Err("the poster host did not answer with an image.".to_owned());
-    }
 
     let bytes = response
         .bytes()
         .await
         .map_err(|error| format!("could not read the poster: {error}"))?;
-    if bytes.len() as u64 > MAX_BYTES {
-        return Err("the poster is too large to display.".to_owned());
-    }
 
-    Ok(format!(
-        "data:{content_type};base64,{}",
-        STANDARD.encode(&bytes)
-    ))
+    data_url_of(&content_type, &bytes)
 }
 
 #[cfg(test)]
@@ -201,13 +219,23 @@ mod tests {
         listener.local_addr().unwrap()
     }
 
+    const TEST_UA: &str = "Mozilla/5.0 pahe-test";
+
+    fn browser() -> Browser<'static> {
+        Browser {
+            base_url: BASE,
+            user_agent: TEST_UA,
+            cookie: None,
+        }
+    }
+
     #[tokio::test]
     async fn fetches_a_poster_directly_on_a_clean_resolver() {
         let server = serve("200 OK", "image/jpeg", IMAGE).await;
         let posters = Posters::new();
 
         let data_url = posters
-            .data_url(&server.url("/posters/one.jpg"), BASE, None)
+            .data_url(&server.url("/posters/one.jpg"), browser(), None)
             .await
             .unwrap();
 
@@ -223,14 +251,39 @@ mod tests {
         let posters = Posters::new();
 
         posters
-            .data_url(&server.url("/posters/two.png"), BASE, None)
+            .data_url(&server.url("/posters/two.png"), browser(), None)
             .await
             .unwrap();
 
         let head = server.requests()[0].to_lowercase();
         assert!(head.starts_with("get /posters/two.png http/1.1"));
         assert!(head.contains(&format!("referer: {BASE}")));
-        assert!(head.contains("user-agent: mozilla/5.0"));
+        assert!(head.contains(&format!("user-agent: {}", TEST_UA.to_lowercase())));
+    }
+
+    #[tokio::test]
+    async fn sends_the_resolver_clearance_cookie() {
+        let server = serve("200 OK", "image/jpeg", IMAGE).await;
+        let posters = Posters::new();
+
+        posters
+            .data_url(
+                &server.url("/posters/one.jpg"),
+                Browser {
+                    base_url: BASE,
+                    user_agent: TEST_UA,
+                    cookie: Some("cf_clearance=abc"),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            server.requests()[0]
+                .to_lowercase()
+                .contains("cookie: cf_clearance=abc")
+        );
     }
 
     #[tokio::test]
@@ -242,7 +295,7 @@ mod tests {
         let data_url = posters
             .data_url(
                 "http://poster.invalid/posters/three.webp",
-                BASE,
+                browser(),
                 Some(&proxy.base),
             )
             .await
@@ -262,8 +315,8 @@ mod tests {
         let posters = Posters::new();
         let url = server.url("/posters/one.jpg");
 
-        let first = posters.data_url(&url, BASE, None).await.unwrap();
-        let second = posters.data_url(&url, BASE, None).await.unwrap();
+        let first = posters.data_url(&url, browser(), None).await.unwrap();
+        let second = posters.data_url(&url, browser(), None).await.unwrap();
 
         assert_eq!(first, second);
         assert_eq!(server.requests().len(), 1);
@@ -275,8 +328,8 @@ mod tests {
         let posters = Posters::new();
         let url = server.url("/posters/one.jpg");
 
-        assert!(posters.data_url(&url, BASE, None).await.is_err());
-        assert!(posters.data_url(&url, BASE, None).await.is_err());
+        assert!(posters.data_url(&url, browser(), None).await.is_err());
+        assert!(posters.data_url(&url, browser(), None).await.is_err());
         assert_eq!(server.requests().len(), 2);
     }
 
@@ -287,7 +340,7 @@ mod tests {
 
         assert!(
             posters
-                .data_url(&server.url("/posters/one.jpg"), BASE, None)
+                .data_url(&server.url("/posters/one.jpg"), browser(), None)
                 .await
                 .is_err()
         );
@@ -299,6 +352,16 @@ mod tests {
         let posters = Posters::new();
         let url = format!("http://{address}/posters/one.jpg");
 
-        assert!(posters.data_url(&url, BASE, None).await.is_err());
+        assert!(posters.data_url(&url, browser(), None).await.is_err());
+    }
+
+    #[test]
+    fn only_image_responses_become_data_urls() {
+        assert_eq!(
+            data_url_of("image/jpeg; charset=binary", IMAGE).unwrap(),
+            format!("data:image/jpeg;base64,{}", STANDARD.encode(IMAGE))
+        );
+        assert!(data_url_of("text/html", IMAGE).is_err());
+        assert!(data_url_of("", IMAGE).is_err());
     }
 }
