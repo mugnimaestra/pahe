@@ -1,0 +1,16 @@
+GLOSSARY.md
+  h_2d220f5439def3 58-61
+docs/adr/0001-local-connect-proxy-for-resolver.md
+  h_2d220f5439def3 3,7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d152caba17835631227bc6d7518d9797e490f7e",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
