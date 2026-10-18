@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../ipc/client", () => ({
   ipc: {
+    fetchPoster: vi.fn(),
     searchAnime: vi.fn(),
     onResolverStatus: vi.fn(),
   },
@@ -32,6 +33,7 @@ describe("search view", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocked.onResolverStatus.mockResolvedValue(() => {});
+    mocked.fetchPoster.mockResolvedValue("data:image/jpeg;base64,abc");
   });
 
   it("starts idle", () => {
@@ -50,7 +52,22 @@ describe("search view", () => {
     expect(mocked.searchAnime).toHaveBeenCalledWith("seitokai");
     expect(await screen.findByText(RESULT.title)).toBeTruthy();
     expect(screen.getByText("2025")).toBeTruthy();
-    expect(screen.getByAltText(`${RESULT.title} poster`)).toBeTruthy();
+
+    const poster = await screen.findByAltText(`${RESULT.title} poster`);
+    expect(poster.getAttribute("src")).toBe("data:image/jpeg;base64,abc");
+    expect(mocked.fetchPoster).toHaveBeenCalledWith(RESULT.poster);
+  });
+
+  it("keeps a result when its poster cannot be fetched", async () => {
+    mocked.fetchPoster.mockRejectedValue("the poster host answered 403");
+    mocked.searchAnime.mockResolvedValue([RESULT]);
+    const { container } = render(<SearchView />);
+
+    search("seitokai");
+
+    expect(await screen.findByText(RESULT.title)).toBeTruthy();
+    expect(screen.queryByAltText(`${RESULT.title} poster`)).toBeNull();
+    expect(container.querySelector(".poster-empty")).toBeTruthy();
   });
 
   it("says so when no Anime matched", async () => {

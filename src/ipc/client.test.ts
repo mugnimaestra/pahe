@@ -47,6 +47,18 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("search_anime", { query: "seitokai" });
   });
 
+  it("fetches a poster through the fetch_poster command", async () => {
+    const dataUrl = "data:image/jpeg;base64,abc";
+    invoke.mockResolvedValue(dataUrl);
+
+    await expect(
+      ipc.fetchPoster("https://i.animepahe.pw/posters/one.jpg"),
+    ).resolves.toBe(dataUrl);
+    expect(invoke).toHaveBeenCalledWith("fetch_poster", {
+      url: "https://i.animepahe.pw/posters/one.jpg",
+    });
+  });
+
   it("subscribes to Resolver status events", async () => {
     const unlisten = vi.fn();
     listen.mockResolvedValue(unlisten);

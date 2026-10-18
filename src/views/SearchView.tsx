@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import Poster from "../components/Poster";
 import {
   ipc,
   type SearchFailure,
@@ -35,23 +36,6 @@ function failureOf(error: unknown): SearchFailure {
     return { kind: error.kind, message: error.message };
   }
   return { kind: "failed", message: messageOf(error) };
-}
-
-function Poster({ result }: { result: SearchResult }) {
-  const [failed, setFailed] = useState(false);
-
-  if (!result.poster || failed) {
-    return <div className="poster-empty" aria-hidden="true" />;
-  }
-
-  return (
-    <img
-      src={result.poster}
-      alt={`${result.title} poster`}
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
-  );
 }
 
 export default function SearchView() {
@@ -166,7 +150,10 @@ export default function SearchView() {
         <ul className="results" aria-label="Search results">
           {state.results.map((result) => (
             <li key={result.animeId}>
-              <Poster result={result} />
+              <Poster
+                url={result.poster}
+                alt={`${result.title} poster`}
+              />
               <p className="result-title">{result.title}</p>
               {result.year !== null && <p className="muted">{result.year}</p>}
             </li>

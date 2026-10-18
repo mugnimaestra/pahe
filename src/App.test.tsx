@@ -7,6 +7,7 @@ vi.mock("./ipc/client", () => ({
     getSettings: vi.fn(),
     saveSettings: vi.fn(),
     searchAnime: vi.fn(),
+    fetchPoster: vi.fn(),
     onResolverStatus: vi.fn(),
   },
 }));

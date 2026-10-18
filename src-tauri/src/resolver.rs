@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time::{Instant, sleep, timeout};
 use url::Url;
 
+use crate::poster::Posters;
 use crate::probe::{self, ProbeOutcome};
 use crate::proxy::{self, DohLookup, ProxyHandle};
 
@@ -86,6 +87,7 @@ pub struct Resolver {
     session: Mutex<Session>,
     probe: Mutex<Option<(String, ProbeOutcome)>>,
     proxy: Mutex<Option<ProxyHandle>>,
+    posters: Posters,
 }
 
 impl Resolver {
@@ -97,6 +99,7 @@ impl Resolver {
             }),
             probe: Mutex::new(None),
             proxy: Mutex::new(None),
+            posters: Posters::new(),
         }
     }
 
@@ -126,6 +129,21 @@ impl Resolver {
                 outcome => return outcome,
             }
         }
+    }
+
+    /// The poster at `url` as a data URL, fetched through the local proxy when
+    /// the probe reports a Poisoned resolver and directly when it is Clean.
+    pub async fn poster(&self, base_url: &str, url: &str) -> Result<String, String> {
+        let proxy = match self.probe_outcome(base_url).await {
+            ProbeOutcome::Poisoned => Some(
+                self.ensure_proxy()
+                    .await
+                    .map_err(|failure| failure.message)?,
+            ),
+            _ => None,
+        };
+
+        self.posters.data_url(url, base_url, proxy.as_deref()).await
     }
 
     /// Called when the Base URL changes: clears the probe cache, the Resolver

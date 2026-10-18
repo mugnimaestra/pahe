@@ -1,3 +1,4 @@
+mod poster;
 mod probe;
 mod proxy;
 mod resolver;
@@ -33,6 +34,16 @@ async fn search_anime(
     resolver.search(&base_url, &query).await
 }
 
+#[tauri::command]
+async fn fetch_poster(
+    store: tauri::State<'_, Store>,
+    resolver: tauri::State<'_, Resolver>,
+    url: String,
+) -> Result<String, String> {
+    let base_url = store.get().base_url;
+    resolver.poster(&base_url, &url).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -57,7 +68,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
-            search_anime
+            search_anime,
+            fetch_poster
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");

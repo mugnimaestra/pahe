@@ -34,6 +34,9 @@ export const ipc = {
     invoke<Settings>("save_settings", { settings }),
   searchAnime: (query: string): Promise<SearchResult[]> =>
     invoke<SearchResult[]>("search_anime", { query }),
+  /** Returns a data URL for the poster, or rejects when it cannot be fetched. */
+  fetchPoster: (url: string): Promise<string> =>
+    invoke<string>("fetch_poster", { url }),
   onResolverStatus: (
     handler: (status: ResolverStatus) => void,
   ): Promise<UnlistenFn> =>
