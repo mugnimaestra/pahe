@@ -12,11 +12,24 @@ export interface SearchResult {
   poster: string | null;
 }
 
-export type SearchFailureKind = "unreachable" | "challengeTimedOut" | "failed";
+export type ResolverFailureKind =
+  | "unreachable"
+  | "challengeTimedOut"
+  | "failed";
 
-export interface SearchFailure {
-  kind: SearchFailureKind;
+export interface ResolverFailure {
+  kind: ResolverFailureKind;
   message: string;
+}
+
+export interface Episode {
+  number: number;
+  airDate: string | null;
+}
+
+export interface AnimeDetail {
+  synopsis: string | null;
+  episodes: Episode[];
 }
 
 export type ResolverPhase = "idle" | "challenge";
@@ -34,6 +47,8 @@ export const ipc = {
     invoke<Settings>("save_settings", { settings }),
   searchAnime: (query: string): Promise<SearchResult[]> =>
     invoke<SearchResult[]>("search_anime", { query }),
+  loadAnime: (animeId: string): Promise<AnimeDetail> =>
+    invoke<AnimeDetail>("load_anime", { animeId }),
   /** Returns a data URL for the poster, or rejects when it cannot be fetched. */
   fetchPoster: (url: string): Promise<string> =>
     invoke<string>("fetch_poster", { url }),

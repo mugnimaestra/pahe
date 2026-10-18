@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,9 +34,23 @@ pub struct SearchResult {
     pub poster: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDetail {
+    pub synopsis: Option<String>,
+    pub episodes: Vec<Episode>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Episode {
+    pub number: u32,
+    pub air_date: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum SearchFailureKind {
+pub enum ResolverFailureKind {
     Unreachable,
     ChallengeTimedOut,
     Failed,
@@ -43,22 +58,22 @@ pub enum SearchFailureKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SearchFailure {
-    pub kind: SearchFailureKind,
+pub struct ResolverFailure {
+    pub kind: ResolverFailureKind,
     pub message: String,
 }
 
-impl SearchFailure {
+impl ResolverFailure {
     fn failed(message: impl Into<String>) -> Self {
         Self {
-            kind: SearchFailureKind::Failed,
+            kind: ResolverFailureKind::Failed,
             message: message.into(),
         }
     }
 
     fn unreachable(base_url: &str) -> Self {
         Self {
-            kind: SearchFailureKind::Unreachable,
+            kind: ResolverFailureKind::Unreachable,
             message: format!("Could not reach {base_url}. Check your connection or the Base URL."),
         }
     }
@@ -109,10 +124,10 @@ impl Resolver {
         &self,
         base_url: &str,
         query: &str,
-    ) -> Result<Vec<SearchResult>, SearchFailure> {
+    ) -> Result<Vec<SearchResult>, ResolverFailure> {
         let query = query.trim();
         if query.is_empty() {
-            return Err(SearchFailure::failed("Type a title to search."));
+            return Err(ResolverFailure::failed("Type a title to search."));
         }
 
         let mut session = self.session.lock().await;
@@ -121,9 +136,39 @@ impl Resolver {
         loop {
             let window = self.ensure_window(&mut session, base_url).await?;
             match self.run_search(&window, base_url, query).await {
-                Err(failure) if failure.kind == SearchFailureKind::Unreachable && !rebuilt => {
+                Err(failure) if failure.kind == ResolverFailureKind::Unreachable && !rebuilt => {
                     // Repeated connection failures may mean the network changed;
                     // drop the cached probe and the window, then try once more.
+                    rebuilt = true;
+                    self.forget_probe().await;
+                    self.destroy_window().await;
+                }
+                outcome => return outcome,
+            }
+        }
+    }
+
+    /// The synopsis and every Episode of one Anime. The release API pages are
+    /// followed to `last_page`, so a long-running Anime lists all Episodes.
+    pub async fn detail(
+        &self,
+        base_url: &str,
+        anime_id: &str,
+    ) -> Result<AnimeDetail, ResolverFailure> {
+        let anime_id = anime_id.trim();
+        if anime_id.is_empty() {
+            return Err(ResolverFailure::failed(
+                "Open an Anime from the search results.",
+            ));
+        }
+
+        let mut session = self.session.lock().await;
+        let mut rebuilt = false;
+
+        loop {
+            let window = self.ensure_window(&mut session, base_url).await?;
+            match self.run_detail(&window, base_url, anime_id).await {
+                Err(failure) if failure.kind == ResolverFailureKind::Unreachable && !rebuilt => {
                     rebuilt = true;
                     self.forget_probe().await;
                     self.destroy_window().await;
@@ -239,7 +284,7 @@ impl Resolver {
         &self,
         session: &mut Session,
         base_url: &str,
-    ) -> Result<WebviewWindow, SearchFailure> {
+    ) -> Result<WebviewWindow, ResolverFailure> {
         if session.base_url == base_url {
             if let Some(window) = self.app.get_webview_window(RESOLVER_LABEL) {
                 return Ok(window);
@@ -251,7 +296,7 @@ impl Resolver {
 
         let outcome = self.probe_outcome(base_url).await;
         if outcome == ProbeOutcome::Unreachable {
-            return Err(SearchFailure::unreachable(base_url));
+            return Err(ResolverFailure::unreachable(base_url));
         }
 
         let proxy = match outcome {
@@ -259,7 +304,7 @@ impl Resolver {
             _ => None,
         };
         let url = Url::parse(base_url)
-            .map_err(|_| SearchFailure::failed("The Base URL is not a valid URL."))?;
+            .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
 
         let (ready_tx, mut ready_rx) = watch::channel(false);
         let mut builder =
@@ -279,12 +324,12 @@ impl Resolver {
 
         if let Some(proxy) = proxy {
             let proxy_url = Url::parse(&proxy)
-                .map_err(|_| SearchFailure::failed("Could not start the local proxy."))?;
+                .map_err(|_| ResolverFailure::failed("Could not start the local proxy."))?;
             builder = builder.proxy_url(proxy_url);
         }
 
         let window = builder.build().map_err(|error| {
-            SearchFailure::failed(format!("Could not open the Resolver: {error}"))
+            ResolverFailure::failed(format!("Could not open the Resolver: {error}"))
         })?;
 
         // Best effort: an early script is retried by the search loop anyway.
@@ -308,7 +353,7 @@ impl Resolver {
         outcome
     }
 
-    async fn ensure_proxy(&self) -> Result<String, SearchFailure> {
+    async fn ensure_proxy(&self) -> Result<String, ResolverFailure> {
         let mut proxy = self.proxy.lock().await;
         if let Some(handle) = proxy.as_ref() {
             return Ok(handle.url.clone());
@@ -317,7 +362,7 @@ impl Resolver {
         let handle = proxy::start(Arc::new(DohLookup::cloudflare()))
             .await
             .map_err(|error| {
-                SearchFailure::failed(format!("Could not start the local proxy: {error}"))
+                ResolverFailure::failed(format!("Could not start the local proxy: {error}"))
             })?;
         let url = handle.url.clone();
         *proxy = Some(handle);
@@ -329,18 +374,73 @@ impl Resolver {
         window: &WebviewWindow,
         base_url: &str,
         query: &str,
-    ) -> Result<Vec<SearchResult>, SearchFailure> {
+    ) -> Result<Vec<SearchResult>, ResolverFailure> {
         let url = search_url(base_url, query)?;
+        let result = self
+            .fetch_page(window, base_url, &url, "application/json")
+            .await?;
+        parse_search(&result.body, base_url)
+    }
+
+    async fn run_detail(
+        &self,
+        window: &WebviewWindow,
+        base_url: &str,
+        anime_id: &str,
+    ) -> Result<AnimeDetail, ResolverFailure> {
+        let episodes =
+            collect_releases(|page| self.fetch_release_page(window, base_url, anime_id, page))
+                .await?;
+        let synopsis = self.anime_synopsis(window, base_url, anime_id).await;
+
+        Ok(AnimeDetail { synopsis, episodes })
+    }
+
+    async fn fetch_release_page(
+        &self,
+        window: &WebviewWindow,
+        base_url: &str,
+        anime_id: &str,
+        page: u32,
+    ) -> Result<ReleasePage, ResolverFailure> {
+        let url = release_url(base_url, anime_id, page)?;
+        let result = self
+            .fetch_page(window, base_url, &url, "application/json")
+            .await?;
+        parse_release_page(&result.body)
+    }
+
+    /// The Anime page's synopsis, or None when it cannot be read. It is
+    /// optional, so one attempt is made and no Challenge is surfaced for it.
+    async fn anime_synopsis(
+        &self,
+        window: &WebviewWindow,
+        base_url: &str,
+        anime_id: &str,
+    ) -> Option<String> {
+        let url = anime_url(base_url, anime_id).ok()?;
+        let result = self.fetch_once(window, &url, "text/html").await.ok()?;
+        if !(200..300).contains(&result.status) {
+            return None;
+        }
+        parse_synopsis(&result.body)
+    }
+
+    /// Fetches `url` in the Resolver, walking the user through a Challenge and
+    /// retrying after transient connection failures.
+    async fn fetch_page(
+        &self,
+        window: &WebviewWindow,
+        base_url: &str,
+        url: &Url,
+        accept: &str,
+    ) -> Result<FetchResult, ResolverFailure> {
         let mut surfaced = false;
         let mut failures = 0;
         let mut challenge_deadline = None;
-        let mut attempt = 0;
 
         let outcome = loop {
-            attempt += 1;
-            let fetched = self.fetch_once(window, &url, attempt).await;
-
-            match fetched {
+            match self.fetch_once(window, url, accept).await {
                 Ok(result) if is_challenge(&result) => {
                     if !surfaced {
                         surfaced = true;
@@ -358,20 +458,18 @@ impl Resolver {
                     let deadline = *challenge_deadline
                         .get_or_insert_with(|| Instant::now() + CHALLENGE_TIMEOUT);
                     if Instant::now() >= deadline {
-                        break Err(SearchFailure {
-                            kind: SearchFailureKind::ChallengeTimedOut,
-                            message: "Cloudflare asked for a human check and the Resolver window was not cleared in time. Try the search again.".to_owned(),
+                        break Err(ResolverFailure {
+                            kind: ResolverFailureKind::ChallengeTimedOut,
+                            message: "Cloudflare asked for a human check and the Resolver window was not cleared in time. Try again.".to_owned(),
                         });
                     }
                     sleep(Duration::from_secs(2)).await;
                 }
-                Ok(result) if (200..300).contains(&result.status) => {
-                    break parse_search(&result.body, base_url);
-                }
+                Ok(result) if (200..300).contains(&result.status) => break Ok(result),
                 Ok(_) | Err(_) => {
                     failures += 1;
                     if failures >= MAX_FAILURES {
-                        break Err(SearchFailure::unreachable(base_url));
+                        break Err(ResolverFailure::unreachable(base_url));
                     }
                     sleep(Duration::from_secs(1)).await;
                 }
@@ -395,17 +493,17 @@ impl Resolver {
         &self,
         window: &WebviewWindow,
         url: &Url,
-        attempt: u32,
+        accept: &str,
     ) -> Result<FetchResult, String> {
         let id = format!(
-            "search-{attempt}-{}",
+            "fetch-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_millis()
+                .as_nanos()
         );
         window
-            .eval(fetch_script(url.as_str(), &id))
+            .eval(fetch_script(url.as_str(), &id, accept))
             .map_err(|error| error.to_string())?;
 
         let deadline = Instant::now() + FETCH_TIMEOUT;
@@ -434,9 +532,9 @@ impl Resolver {
     }
 }
 
-fn search_url(base_url: &str, query: &str) -> Result<Url, SearchFailure> {
+fn search_url(base_url: &str, query: &str) -> Result<Url, ResolverFailure> {
     let mut url = Url::parse(base_url)
-        .map_err(|_| SearchFailure::failed("The Base URL is not a valid URL."))?;
+        .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
     url.set_path("/api");
     url.query_pairs_mut()
         .clear()
@@ -445,13 +543,37 @@ fn search_url(base_url: &str, query: &str) -> Result<Url, SearchFailure> {
     Ok(url)
 }
 
-fn fetch_script(url: &str, id: &str) -> String {
+fn anime_url(base_url: &str, anime_id: &str) -> Result<Url, ResolverFailure> {
+    let mut url = Url::parse(base_url)
+        .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
+    url.set_path("/anime");
+    url.path_segments_mut()
+        .map_err(|_| ResolverFailure::failed("The Base URL cannot hold an Anime path."))?
+        .push(anime_id);
+    Ok(url)
+}
+
+fn release_url(base_url: &str, anime_id: &str, page: u32) -> Result<Url, ResolverFailure> {
+    let mut url = Url::parse(base_url)
+        .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
+    url.set_path("/api");
+    url.query_pairs_mut()
+        .clear()
+        .append_pair("m", "release")
+        .append_pair("id", anime_id)
+        .append_pair("sort", "episode_asc")
+        .append_pair("page", &page.to_string());
+    Ok(url)
+}
+
+fn fetch_script(url: &str, id: &str, accept: &str) -> String {
     let url = serde_json::to_string(url).expect("URL is valid JSON");
     let id = serde_json::to_string(id).expect("id is valid JSON");
+    let accept = serde_json::to_string(accept).expect("accept is valid JSON");
 
     format!(
         r#"window.__paheFetch = {{ id: {id}, result: null }};
-fetch({url}, {{ credentials: "include", cache: "no-store", headers: {{ accept: "application/json" }} }})
+fetch({url}, {{ credentials: "include", cache: "no-store", headers: {{ accept: {accept} }} }})
   .then(async (response) => {{
     const body = await response.text();
     window.__paheFetch = {{ id: {id}, result: {{ status: response.status, contentType: response.headers.get("content-type") || "", mitigated: response.headers.get("cf-mitigated") || "", body }} }};
@@ -542,13 +664,13 @@ fn decode_user_agent(raw: &str) -> Option<String> {
     serde_json::from_str::<String>(&inner).ok()
 }
 
-pub fn parse_search(body: &str, base_url: &str) -> Result<Vec<SearchResult>, SearchFailure> {
+pub fn parse_search(body: &str, base_url: &str) -> Result<Vec<SearchResult>, ResolverFailure> {
     let value: Value = serde_json::from_str(body)
-        .map_err(|_| SearchFailure::failed("animepahe sent an unexpected search response."))?;
+        .map_err(|_| ResolverFailure::failed("animepahe sent an unexpected search response."))?;
     let data = value
         .get("data")
         .and_then(Value::as_array)
-        .ok_or_else(|| SearchFailure::failed("animepahe sent an unexpected search response."))?;
+        .ok_or_else(|| ResolverFailure::failed("animepahe sent an unexpected search response."))?;
     let base = Url::parse(base_url).ok();
 
     Ok(data
@@ -580,6 +702,193 @@ pub fn parse_search(body: &str, base_url: &str) -> Result<Vec<SearchResult>, Sea
             })
         })
         .collect())
+}
+
+/// One page of the release API: the parsed Episodes plus its `last_page`.
+struct ReleasePage {
+    episodes: Vec<Episode>,
+    last_page: u32,
+}
+
+/// Animepahe paginates releases 30 per page. Every page up to `last_page` is
+/// fetched so a long-running Anime lists all of its Episodes.
+const MAX_RELEASE_PAGES: u32 = 200;
+
+async fn collect_releases<F, Fut>(mut fetch: F) -> Result<Vec<Episode>, ResolverFailure>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: Future<Output = Result<ReleasePage, ResolverFailure>>,
+{
+    let mut episodes = Vec::new();
+    let mut page = 1;
+
+    loop {
+        let fetched = fetch(page).await?;
+        episodes.extend(fetched.episodes);
+
+        if page >= fetched.last_page {
+            return Ok(episodes);
+        }
+        if page >= MAX_RELEASE_PAGES {
+            return Err(ResolverFailure::failed(
+                "animepahe reported more release pages than pahe will load.",
+            ));
+        }
+        page += 1;
+    }
+}
+
+fn parse_release_page(body: &str) -> Result<ReleasePage, ResolverFailure> {
+    let value: Value = serde_json::from_str(body)
+        .map_err(|_| ResolverFailure::failed("animepahe sent an unexpected release response."))?;
+
+    let last_page = value
+        .get("last_page")
+        .and_then(Value::as_u64)
+        .and_then(|page| u32::try_from(page).ok())
+        .unwrap_or(1)
+        .max(1);
+
+    let empty = Vec::new();
+    let rows = match value.get("data") {
+        Some(Value::Array(rows)) => rows,
+        None => &empty,
+        Some(_) => {
+            return Err(ResolverFailure::failed(
+                "animepahe sent an unexpected release response.",
+            ));
+        }
+    };
+
+    let episodes = rows
+        .iter()
+        .filter_map(|row| {
+            Some(Episode {
+                number: u32::try_from(row.get("episode")?.as_u64()?).ok()?,
+                air_date: air_date(row.get("created_at")),
+            })
+        })
+        .collect();
+
+    Ok(ReleasePage {
+        episodes,
+        last_page,
+    })
+}
+
+/// The release API's `created_at` is the only date it carries; its date part is
+/// the air date. Missing or malformed dates stay absent rather than guessed.
+fn air_date(value: Option<&Value>) -> Option<String> {
+    let text = value?.as_str()?.trim();
+    let date = text.split_whitespace().next()?;
+    let bytes = date.as_bytes();
+
+    let shaped = bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit());
+
+    shaped.then(|| date.to_owned())
+}
+
+/// The Anime page's `<meta name="description">` holds the synopsis.
+fn parse_synopsis(html: &str) -> Option<String> {
+    let text = decode_entities(meta_content(html, "description")?.trim());
+
+    (!text.is_empty()).then_some(text)
+}
+
+fn meta_content(html: &str, name: &str) -> Option<String> {
+    let mut rest = html;
+
+    while let Some(start) = rest.find("<meta") {
+        let tag = &rest[start..];
+        let end = tag.find('>')?;
+        let attributes = &tag[..end];
+
+        if attribute(attributes, "name").as_deref() == Some(name) {
+            return attribute(attributes, "content");
+        }
+        rest = &tag[end + 1..];
+    }
+    None
+}
+
+/// Reads one quoted attribute from a tag, tolerating either attribute order.
+fn attribute(tag: &str, key: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let pattern = format!("{key}=");
+
+    for (start, _) in lower.match_indices(&pattern) {
+        let before = lower[..start].chars().next_back();
+        if before.is_some_and(|ch| !ch.is_whitespace()) {
+            continue;
+        }
+
+        let value = tag[start + pattern.len()..].trim_start();
+        let mut chars = value.chars();
+        let quote = chars.next()?;
+        if quote != '"' && quote != '\'' {
+            continue;
+        }
+        let value = chars.as_str();
+        let end = value.find(quote)?;
+        return Some(value[..end].to_owned());
+    }
+    None
+}
+
+fn decode_entities(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(index) = rest.find('&') {
+        decoded.push_str(&rest[..index]);
+        let entity = &rest[index + 1..];
+
+        let Some(end) = entity.find(';') else {
+            decoded.push_str(rest);
+            return decoded;
+        };
+
+        match decode_entity(&entity[..end]) {
+            Some(ch) => {
+                decoded.push(ch);
+                rest = &entity[end + 1..];
+            }
+            None => {
+                decoded.push('&');
+                rest = entity;
+            }
+        }
+    }
+
+    decoded.push_str(rest);
+    decoded
+}
+
+fn decode_entity(entity: &str) -> Option<char> {
+    let named = match entity {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => None,
+    };
+    if named.is_some() {
+        return named;
+    }
+
+    let number = entity.strip_prefix('#')?;
+    let code = match number.strip_prefix(['x', 'X']) {
+        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+        None => number.parse().ok()?,
+    };
+    char::from_u32(code)
 }
 
 fn as_text(value: &Value) -> Option<String> {
@@ -724,5 +1033,195 @@ mod tests {
         assert!(!domain_matches(Some("animepahe.pw"), "notanimepahe.pw"));
         assert!(!domain_matches(Some("other.example"), "i.animepahe.pw"));
         assert!(!domain_matches(None, "i.animepahe.pw"));
+    }
+
+    const RELEASE_PAGE: &str = r#"{
+        "total": 175,
+        "per_page": 30,
+        "current_page": 1,
+        "last_page": 6,
+        "data": [
+            {
+                "id": 4387,
+                "episode": 1,
+                "session": "1c600e41110dd17d00bc96db2208bf0e6c1c044d528246ac229d80f5aa480170",
+                "created_at": "2018-06-11 16:14:41"
+            },
+            {
+                "id": 4388,
+                "episode": 2,
+                "session": "f0e1d2c3b4a5968778695a4b3c2d1e0f",
+                "created_at": null
+            },
+            {
+                "id": 4389,
+                "episode": 3,
+                "created_at": "not a date"
+            }
+        ]
+    }"#;
+
+    fn episode(number: u32) -> Episode {
+        Episode {
+            number,
+            air_date: None,
+        }
+    }
+
+    #[test]
+    fn parses_a_release_page_with_episode_numbers_and_air_dates() {
+        let page = parse_release_page(RELEASE_PAGE).unwrap();
+
+        assert_eq!(page.last_page, 6);
+        assert_eq!(
+            page.episodes,
+            vec![
+                Episode {
+                    number: 1,
+                    air_date: Some("2018-06-11".to_owned()),
+                },
+                Episode {
+                    number: 2,
+                    air_date: None,
+                },
+                Episode {
+                    number: 3,
+                    air_date: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_release_response_lists_no_episodes() {
+        let page = parse_release_page(r#"{"message": ""}"#).unwrap();
+
+        assert_eq!(page.last_page, 1);
+        assert!(page.episodes.is_empty());
+    }
+
+    #[test]
+    fn rejects_a_release_response_that_is_not_a_page() {
+        assert!(parse_release_page("<html>Just a moment...</html>").is_err());
+        assert!(parse_release_page(r#"{"data": {}}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn follows_every_release_page_in_order() {
+        let requested = std::cell::RefCell::new(Vec::new());
+
+        let episodes = collect_releases(|page| {
+            requested.borrow_mut().push(page);
+            let (episodes, last_page) = match page {
+                1 => (vec![episode(1), episode(2)], 3),
+                2 => (vec![episode(3)], 3),
+                _ => (vec![episode(4), episode(5)], 3),
+            };
+            async move {
+                Ok(ReleasePage {
+                    episodes,
+                    last_page,
+                })
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            episodes.iter().map(|item| item.number).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5]
+        );
+        assert_eq!(*requested.borrow(), vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn an_empty_release_page_lists_no_episodes() {
+        let episodes = collect_releases(|_| async {
+            Ok(ReleasePage {
+                episodes: Vec::new(),
+                last_page: 1,
+            })
+        })
+        .await
+        .unwrap();
+
+        assert!(episodes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_release_page_fails_the_whole_list() {
+        let result = collect_releases(|page| async move {
+            if page == 2 {
+                Err(ResolverFailure::failed("page 2 failed"))
+            } else {
+                Ok(ReleasePage {
+                    episodes: vec![episode(1)],
+                    last_page: 3,
+                })
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap_err().kind, ResolverFailureKind::Failed);
+    }
+
+    #[test]
+    fn release_url_asks_for_ascending_episode_pages() {
+        let url = release_url(BASE, "7da6a559-70e7-5ce1-4f29-3732c1fea142", 2).unwrap();
+
+        assert_eq!(url.path(), "/api");
+        assert_eq!(
+            url.query(),
+            Some("m=release&id=7da6a559-70e7-5ce1-4f29-3732c1fea142&sort=episode_asc&page=2")
+        );
+    }
+
+    #[test]
+    fn anime_url_points_at_the_anime_page() {
+        let url = anime_url(BASE, "7da6a559-70e7-5ce1-4f29-3732c1fea142").unwrap();
+
+        assert_eq!(
+            url.as_str(),
+            "https://animepahe.pw/anime/7da6a559-70e7-5ce1-4f29-3732c1fea142"
+        );
+    }
+
+    #[test]
+    fn reads_the_synopsis_from_the_description_meta_tag() {
+        let html = r#"<html><head>
+            <meta property="og:description" content="not this one">
+            <meta name="description" content="In the enchanted Kingdom of Fiore, the &quot;Salamander&quot; &amp; friends &#39;live&#39; here.">
+        </head></html>"#;
+
+        assert_eq!(
+            parse_synopsis(html).as_deref(),
+            Some("In the enchanted Kingdom of Fiore, the \"Salamander\" & friends 'live' here.")
+        );
+    }
+
+    #[test]
+    fn reads_a_description_tag_with_the_content_attribute_first() {
+        let html = r#"<meta content="Folded &amp; simple" name="description">"#;
+
+        assert_eq!(parse_synopsis(html).as_deref(), Some("Folded & simple"));
+    }
+
+    #[test]
+    fn an_anime_page_without_a_description_has_no_synopsis() {
+        assert!(parse_synopsis(r#"<meta property="og:description" content="nope">"#).is_none());
+        assert!(parse_synopsis(r#"<meta name="description" content="  ">"#).is_none());
+        assert!(parse_synopsis("<html></html>").is_none());
+    }
+
+    #[test]
+    fn a_date_that_is_not_an_air_date_stays_absent() {
+        assert_eq!(
+            air_date(Some(&Value::String("2018-06-11 16:14:41".to_owned()))).as_deref(),
+            Some("2018-06-11")
+        );
+        assert!(air_date(Some(&Value::String("2018/06/11".to_owned()))).is_none());
+        assert!(air_date(Some(&Value::String(String::new()))).is_none());
+        assert!(air_date(Some(&Value::Null)).is_none());
+        assert!(air_date(None).is_none());
     }
 }

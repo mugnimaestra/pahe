@@ -47,6 +47,19 @@ describe("ipc", () => {
     expect(invoke).toHaveBeenCalledWith("search_anime", { query: "seitokai" });
   });
 
+  it("loads an Anime detail through the load_anime command", async () => {
+    const detail = {
+      synopsis: "A wizard guild in the Kingdom of Fiore.",
+      episodes: [{ number: 1, airDate: "2018-06-11" }],
+    };
+    invoke.mockResolvedValue(detail);
+
+    await expect(ipc.loadAnime("anime-id")).resolves.toEqual(detail);
+    expect(invoke).toHaveBeenCalledWith("load_anime", {
+      animeId: "anime-id",
+    });
+  });
+
   it("fetches a poster through the fetch_poster command", async () => {
     const dataUrl = "data:image/jpeg;base64,abc";
     invoke.mockResolvedValue(dataUrl);

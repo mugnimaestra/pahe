@@ -6,6 +6,7 @@ vi.mock("../ipc/client", () => ({
   ipc: {
     fetchPoster: vi.fn(),
     searchAnime: vi.fn(),
+    loadAnime: vi.fn(),
     onResolverStatus: vi.fn(),
   },
 }));
@@ -123,6 +124,36 @@ describe("search view", () => {
 
     expect(screen.getByText(RESULT.title)).toBeTruthy();
     expect(screen.queryByText(/Cloudflare needs a human check/)).toBeNull();
+  });
+
+  it("opens an Anime and returns to the search results", async () => {
+    mocked.searchAnime.mockResolvedValue([RESULT]);
+    mocked.loadAnime.mockResolvedValue({
+      synopsis: "A wizard guild in the Kingdom of Fiore.",
+      episodes: [{ number: 1, airDate: "2018-06-11" }],
+    });
+    render(<SearchView />);
+
+    search("seitokai");
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: new RegExp(RESULT.title),
+      }),
+    );
+
+    expect(mocked.loadAnime).toHaveBeenCalledWith(RESULT.animeId);
+    expect(
+      await screen.findByRole("heading", { name: RESULT.title }),
+    ).toBeTruthy();
+    expect(screen.getByText("Episode 1")).toBeTruthy();
+    expect(screen.getByText("2018-06-11")).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "← Back to results" }),
+    );
+
+    expect(screen.getByRole("heading", { name: "Search" })).toBeTruthy();
+    expect(screen.getByText(RESULT.title)).toBeTruthy();
   });
 
   it("falls back when a failure payload is malformed", async () => {

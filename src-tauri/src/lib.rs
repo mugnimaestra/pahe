@@ -4,7 +4,7 @@ mod proxy;
 mod resolver;
 mod settings;
 
-use resolver::{Resolver, SearchFailure, SearchResult};
+use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
 use tauri::Manager;
 
@@ -29,9 +29,19 @@ async fn search_anime(
     store: tauri::State<'_, Store>,
     resolver: tauri::State<'_, Resolver>,
     query: String,
-) -> Result<Vec<SearchResult>, SearchFailure> {
+) -> Result<Vec<SearchResult>, ResolverFailure> {
     let base_url = store.get().base_url;
     resolver.search(&base_url, &query).await
+}
+
+#[tauri::command]
+async fn load_anime(
+    store: tauri::State<'_, Store>,
+    resolver: tauri::State<'_, Resolver>,
+    anime_id: String,
+) -> Result<AnimeDetail, ResolverFailure> {
+    let base_url = store.get().base_url;
+    resolver.detail(&base_url, &anime_id).await
 }
 
 #[tauri::command]
@@ -73,6 +83,7 @@ pub fn run() {
             get_settings,
             save_settings,
             search_anime,
+            load_anime,
             fetch_poster
         ])
         .run(tauri::generate_context!())
