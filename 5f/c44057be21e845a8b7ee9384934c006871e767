@@ -1,0 +1,70 @@
+.github/workflows/ci.yml
+  h_2d220f5439def3 1-110
+.gitignore
+  h_2d220f5439def3 3
+.vscode/extensions.json
+  h_2d220f5439def3 1-3
+CODING_STANDARDS.md
+  h_2d220f5439def3 1-54
+README.md
+  h_2d220f5439def3 4-24
+index.html
+  h_2d220f5439def3 1-13
+package.json
+  h_2d220f5439def3 1-34
+pnpm-lock.yaml
+  h_2d220f5439def3 1-1456
+src-tauri/.gitignore
+  h_2d220f5439def3 1-7
+src-tauri/Cargo.lock
+  h_2d220f5439def3 1-4781
+src-tauri/Cargo.toml
+  h_2d220f5439def3 1-31
+src-tauri/build.rs
+  h_2d220f5439def3 1-3
+src-tauri/capabilities/default.json
+  h_2d220f5439def3 1-7
+src-tauri/src/lib.rs
+  h_2d220f5439def3 1-39
+src-tauri/src/main.rs
+  h_2d220f5439def3 1-6
+src-tauri/src/settings.rs
+  h_2d220f5439def3 1-164
+src-tauri/tauri.conf.json
+  h_2d220f5439def3 1-38
+src/App.css
+  h_2d220f5439def3 1-149
+src/App.test.tsx
+  h_2d220f5439def3 1-79
+src/App.tsx
+  h_2d220f5439def3 1-60
+src/ipc/boundary.test.ts
+  h_2d220f5439def3 1-28
+src/ipc/client.test.ts
+  h_2d220f5439def3 1-29
+src/ipc/client.ts
+  h_2d220f5439def3 1-14
+src/main.tsx
+  h_2d220f5439def3 1-9
+src/views/SettingsView.tsx
+  h_2d220f5439def3 1-87
+src/vite-env.d.ts
+  h_2d220f5439def3 1
+tsconfig.json
+  h_2d220f5439def3 1-26
+tsconfig.node.json
+  h_2d220f5439def3 1-10
+vite.config.ts
+  h_2d220f5439def3 1-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5fc44057be21e845a8b7ee9384934c006871e767",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
