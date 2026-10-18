@@ -1,0 +1,34 @@
+src-tauri/src/lib.rs
+  h_2d220f5439def3 7,32,37-46,86
+src-tauri/src/resolver.rs
+  h_2d220f5439def3 1,37-50,53,61-62,66,69,76,127,130,139,151-180,287,299,307,327,332,356,365,377,379-437,443,461-463,468,472,496,499,503,506,535,537,546-569,572,576,667,669,673,707-893,1037-1226
+src/App.css
+  h_2d220f5439def3 233-324
+src/failure.ts
+  h_2d220f5439def3 1-25
+src/hooks/useResolverChallenge.ts
+  h_2d220f5439def3 1-37
+src/ipc/client.test.ts
+  h_2d220f5439def3 50-62
+src/ipc/client.ts
+  h_2d220f5439def3 15-18,20-21,25-34,50-51
+src/views/AnimeDetailView.test.tsx
+  h_2d220f5439def3 1-135
+src/views/AnimeDetailView.tsx
+  h_2d220f5439def3 1-94
+src/views/SearchView.test.tsx
+  h_2d220f5439def3 9,129-158
+src/views/SearchView.tsx
+  h_2d220f5439def3 1,3-6,19-20,52-57,113-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b92718ba85943f4ed3651056213060206dabf6b",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
