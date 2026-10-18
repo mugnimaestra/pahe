@@ -1,0 +1,16 @@
+src-tauri/src/settings.rs
+  h_2d220f5439def3 52,64
+src/main.tsx
+  h_2d220f5439def3 5-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34a93bcf6dea71b3f7fbe92bbc79d6bc524a90e1",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
