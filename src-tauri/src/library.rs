@@ -36,7 +36,6 @@ pub fn item_key(anime: &str, episode: f64, quality: &str) -> String {
 pub struct LibraryItem {
     pub anime_id: Option<String>,
     pub title_slug: String,
-    pub title: String,
     pub poster: Option<String>,
     pub episode: f64,
     pub version: u32,
@@ -60,7 +59,6 @@ impl Default for LibraryItem {
         Self {
             anime_id: None,
             title_slug: String::new(),
-            title: String::new(),
             poster: None,
             episode: 0.0,
             version: 1,
@@ -171,7 +169,6 @@ impl Library {
                     continue;
                 };
                 item.anime_id = Some(found.anime_id.clone());
-                item.title = found.title.clone();
                 item.poster = found.poster.clone();
             }
 
@@ -291,7 +288,6 @@ fn scan(folder: &Path) -> Result<Vec<LibraryItem>, String> {
         .into_iter()
         .map(|(path, parsed)| LibraryItem {
             anime_id: None,
-            title: humanize(&parsed.title_slug),
             title_slug: parsed.title_slug,
             poster: None,
             episode: parsed.episode,
@@ -320,7 +316,6 @@ fn reconcile(scanned: Vec<LibraryItem>, existing: &[LibraryItem]) -> Vec<Library
 
             if let Some(previous) = previous {
                 item.anime_id = previous.anime_id.clone();
-                item.title = previous.title.clone();
                 item.poster = previous.poster.clone();
             }
             item
@@ -369,7 +364,6 @@ fn groups_of(items: &[LibraryItem]) -> Vec<LibraryAnime> {
         group.episodes.insert(episode_key(item.episode));
         if item.anime_id.is_some() {
             group.anime_id = item.anime_id.clone();
-            group.title = item.title.clone();
         }
         if group.poster.is_none() {
             group.poster = item.poster.clone();
@@ -404,12 +398,13 @@ fn normalize(title: &str) -> String {
 }
 
 /// The search result that names the same Anime as the title slug: an exact
-/// title first, then a containment match. Anything weaker stays unmatched so a
-/// wrong poster never lands in the Library.
+/// title first, then a containment match. animepahe localises result titles, so
+/// a romaji slug can miss both; its own relevance order then puts the Anime the
+/// filename came from first, which is the best match available.
 fn best_match<'a>(wanted: &str, results: &'a [SearchResult]) -> Option<&'a SearchResult> {
     let wanted = normalize(wanted);
     if wanted.is_empty() {
-        return None;
+        return results.first();
     }
 
     results
@@ -422,6 +417,7 @@ fn best_match<'a>(wanted: &str, results: &'a [SearchResult]) -> Option<&'a Searc
                     && (candidate.contains(&wanted) || wanted.contains(&candidate))
             })
         })
+        .or_else(|| results.first())
 }
 
 fn save(path: &Path, items: &[LibraryItem]) -> Result<(), String> {
@@ -671,7 +667,7 @@ mod tests {
             groups[0],
             LibraryAnime {
                 anime_id: Some("anime-id".to_owned()),
-                title: "Seitokai ni mo Ana wa Aru!".to_owned(),
+                title: "Seitokai ni mo Ana wa Aru".to_owned(),
                 poster: Some("https://i.animepahe.pw/posters/one.jpg".to_owned()),
                 episode_count: 3,
             }
@@ -754,7 +750,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_different_anime_stays_unmatched() {
+    async fn falls_back_to_animepahes_ranking_when_titles_are_localised() {
         let shelf = Shelf::new();
         shelf.touch(ONE);
         let library = shelf.library();
@@ -762,13 +758,33 @@ mod tests {
 
         let groups = library
             .enrich(|_| async {
-                Ok(vec![search_result(
-                    "Completely Different",
-                    Some("https://i.animepahe.pw/posters/other.jpg"),
-                )])
+                Ok(vec![
+                    search_result(
+                        "Even the Student Council Has Its Holes!",
+                        Some("https://i.animepahe.pw/posters/localised.jpg"),
+                    ),
+                    search_result("Seitokai Yakuindomo", None),
+                ])
             })
             .await
             .unwrap();
+
+        assert_eq!(groups[0].anime_id.as_deref(), Some("anime-id"));
+        assert_eq!(
+            groups[0].poster.as_deref(),
+            Some("https://i.animepahe.pw/posters/localised.jpg")
+        );
+        assert_eq!(groups[0].title, "Seitokai ni mo Ana wa Aru");
+    }
+
+    #[tokio::test]
+    async fn an_empty_search_keeps_the_placeholder() {
+        let shelf = Shelf::new();
+        shelf.touch(ONE);
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+
+        let groups = library.enrich(|_| async { Ok(Vec::new()) }).await.unwrap();
 
         assert_eq!(groups[0].anime_id, None);
         assert_eq!(groups[0].poster, None);
