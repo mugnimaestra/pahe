@@ -1,0 +1,36 @@
+src-tauri/Cargo.lock
+  h_2d220f5439def3 1094-1103,2523-2524
+src-tauri/Cargo.toml
+  h_2d220f5439def3 23,28-29
+src-tauri/src/download.rs
+  h_2d220f5439def3 1-695
+src-tauri/src/lib.rs
+  h_2d220f5439def3 1,11,15,97-163,212-213
+src-tauri/src/resolver.rs
+  h_2d220f5439def3 3,6,28-31,54,58-76,121-123,127-190,194,199,206,213,319-668,729,754,764,893,918,1001-1228,1428,1720,1729,1744-1745,1750,1755,1762-1774,1907-2078
+src/App.css
+  h_2d220f5439def3 316,323-342,344-366
+src/App.test.tsx
+  h_2d220f5439def3 14,32
+src/ipc/client.test.ts
+  h_2d220f5439def3 60,127-165
+src/ipc/client.ts
+  h_2d220f5439def3 28,50-77,98-102
+src/views/AnimeDetailView.test.tsx
+  h_2d220f5439def3 2,10-11,19,38-39,43-57,63-69,73,75-78,165-299
+src/views/AnimeDetailView.tsx
+  h_2d220f5439def3 4-11,13,20-22,34-36,58-104,142-185,192-273
+src/views/SearchView.test.tsx
+  h_2d220f5439def3 11,38,135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6500063c760e187c8115bb1f8dec5999070d1b9",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
