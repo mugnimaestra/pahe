@@ -1,0 +1,149 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  background: #101113;
+  color: #e9e9ec;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  padding: 24px 12px;
+  background: #17181c;
+  border-right: 1px solid #26272c;
+}
+
+.wordmark {
+  margin: 0 12px 28px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #f4f4f6;
+}
+
+nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+nav button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #a6a8b0;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 7px;
+  font: inherit;
+  cursor: pointer;
+}
+
+nav button:hover {
+  background: #202127;
+  color: #f4f4f6;
+}
+
+nav button[aria-current="page"] {
+  background: #2a2140;
+  color: #ddd0ff;
+  font-weight: 600;
+}
+
+.content {
+  flex: 1;
+  padding: 40px 48px;
+}
+
+.view {
+  max-width: 640px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+}
+
+.muted {
+  margin: 0;
+  color: #9a9ca6;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 28px;
+}
+
+.settings-form label {
+  font-weight: 600;
+}
+
+.settings-form input {
+  width: 100%;
+  max-width: 460px;
+  padding: 9px 11px;
+  border: 1px solid #35363d;
+  border-radius: 7px;
+  background: #15161a;
+  color: inherit;
+  font: inherit;
+}
+
+.settings-form input:focus {
+  outline: 2px solid #7c5cff;
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.settings-form button {
+  margin-top: 8px;
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 7px;
+  background: #7c5cff;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.settings-form [role="status"] {
+  margin: 0;
+  color: #7bd88f;
+}
+
+.settings-form [role="alert"] {
+  margin: 0;
+  color: #ff8f8f;
+}
