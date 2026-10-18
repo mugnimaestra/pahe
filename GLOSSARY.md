@@ -41,7 +41,7 @@ The signed direct media URL the Resolver extracts for a Source.
 _Avoid_: stream URL, download link
 
 **Download job**:
-A request to fetch one Episode at one Quality, tracked as queued, running, completed, or failed.
+A request to fetch one Episode at one Quality, tracked as queued, running, paused (the queue waits on a Challenge), interrupted (the app closed mid-download), completed, or failed.
 _Avoid_: task, transfer
 
 **Library item**:
