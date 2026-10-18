@@ -1,0 +1,14 @@
+src-tauri/src/download.rs
+  h_2d220f5439def3 502-517
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ceae880a3632d82c8703ddf7c9bdce202486432",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
