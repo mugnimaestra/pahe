@@ -197,10 +197,39 @@ pub struct Resolver {
     posters: Posters,
     user_agent: Mutex<Option<String>>,
     redirects: Arc<RedirectGate>,
+    challenge: watch::Sender<bool>,
+}
+
+/// Wall time spent resolving, with Challenge time excluded so a page timeout
+/// does not expire while a human is clearing the gate.
+#[derive(Default)]
+struct ChallengeClock {
+    paused: Duration,
+    since: Option<Instant>,
+}
+
+impl ChallengeClock {
+    fn pause(&mut self) {
+        self.since.get_or_insert_with(Instant::now);
+    }
+
+    fn resume(&mut self) {
+        if let Some(since) = self.since.take() {
+            self.paused += since.elapsed();
+        }
+    }
+
+    fn elapsed(&self, started: Instant) -> Duration {
+        let paused = self.paused + self.since.map(|since| since.elapsed()).unwrap_or_default();
+
+        started.elapsed().saturating_sub(paused)
+    }
 }
 
 impl Resolver {
     pub fn new(app: AppHandle) -> Self {
+        let (challenge, _) = watch::channel(false);
+
         Self {
             app,
             session: Mutex::new(ResolverWindow {
@@ -211,7 +240,14 @@ impl Resolver {
             posters: Posters::new(),
             user_agent: Mutex::new(None),
             redirects: Arc::new(RedirectGate::default()),
+            challenge,
         }
+    }
+
+    /// True while a Challenge is surfaced and waiting for the user. The queue
+    /// pauses on true and resumes on false.
+    pub fn challenge_watch(&self) -> watch::Receiver<bool> {
+        self.challenge.subscribe()
     }
 
     pub async fn search(
@@ -337,8 +373,9 @@ impl Resolver {
 
         let mut guard = self.session.lock().await;
         let window = self.ensure_window(&mut guard, base_url).await?;
+        let mut clock = ChallengeClock::default();
         let result = self
-            .resolve_candidates(&window, base_url, anime_id, session, quality)
+            .resolve_candidates(&window, base_url, anime_id, session, quality, &mut clock)
             .await;
         self.reset_to_base(&window, base_url).await;
         result
@@ -351,9 +388,10 @@ impl Resolver {
         anime_id: &str,
         session: &str,
         quality: &str,
+        clock: &mut ChallengeClock,
     ) -> Result<ResolvedSource, ResolverFailure> {
         let play = play_url(base_url, anime_id, session)?;
-        self.navigate_ready(window, &play).await?;
+        self.navigate_ready(window, &play, clock).await?;
 
         let pairs = self
             .eval_json::<Vec<(String, String)>>(window, SOURCE_LINKS_SCRIPT)
@@ -371,7 +409,7 @@ impl Resolver {
 
         let mut last_error = None;
         for source in order_sources(sources, quality) {
-            match self.capture_cdn(window, base_url, &source).await {
+            match self.capture_cdn(window, base_url, &source, clock).await {
                 Ok(cdn_url) => {
                     return Ok(ResolvedSource {
                         cdn_url,
@@ -399,25 +437,30 @@ impl Resolver {
         window: &WebviewWindow,
         base_url: &str,
         source: &Source,
+        clock: &mut ChallengeClock,
     ) -> Result<String, ResolverFailure> {
         let href = Url::parse(&source.href)
             .map_err(|_| ResolverFailure::failed("A download Source has an invalid link."))?;
-        self.navigate_ready(window, &href).await?;
+        self.navigate_ready(window, &href, clock).await?;
 
-        let kwik = self.wait_for_kwik(window).await?;
-        let form = self.wait_for_download_form(window).await?;
+        let kwik = self.wait_for_kwik(window, clock).await?;
+        let form = self.wait_for_download_form(window, clock).await?;
         self.submit_download_form(window, base_url, &kwik, &form)
             .await
     }
 
     /// pahe.win sometimes shows a countdown page whose Continue link carries the
     /// kwik URL. Follow that link, or accept a Source that already landed on kwik.
-    async fn wait_for_kwik(&self, window: &WebviewWindow) -> Result<Url, ResolverFailure> {
-        let deadline = Instant::now() + NAVIGATION_TIMEOUT;
+    async fn wait_for_kwik(
+        &self,
+        window: &WebviewWindow,
+        clock: &mut ChallengeClock,
+    ) -> Result<Url, ResolverFailure> {
+        let started = Instant::now();
 
         loop {
             let snapshot = self
-                .wait_for(window, "The download Source did not open.", |page| {
+                .wait_for(window, "The download Source did not open.", clock, |page| {
                     page.ready
                 })
                 .await?;
@@ -435,11 +478,11 @@ impl Resolver {
             {
                 let url = Url::parse(&href)
                     .map_err(|_| ResolverFailure::failed("kwik sent an invalid URL."))?;
-                self.navigate_ready(window, &url).await?;
+                self.navigate_ready(window, &url, clock).await?;
                 return Ok(url);
             }
 
-            if Instant::now() >= deadline {
+            if clock.elapsed(started) >= NAVIGATION_TIMEOUT {
                 return Err(ResolverFailure::failed(
                     "The Source did not lead to a kwik download page.",
                 ));
@@ -451,12 +494,15 @@ impl Resolver {
     async fn wait_for_download_form(
         &self,
         window: &WebviewWindow,
+        clock: &mut ChallengeClock,
     ) -> Result<DownloadForm, ResolverFailure> {
-        let deadline = Instant::now() + NAVIGATION_TIMEOUT;
+        let started = Instant::now();
 
         loop {
             let _ = self
-                .wait_for(window, "The kwik page did not load.", |page| page.ready)
+                .wait_for(window, "The kwik page did not load.", clock, |page| {
+                    page.ready
+                })
                 .await?;
 
             if let Some(form) = self
@@ -470,7 +516,7 @@ impl Resolver {
                 return Ok(form);
             }
 
-            if Instant::now() >= deadline {
+            if clock.elapsed(started) >= NAVIGATION_TIMEOUT {
                 return Err(ResolverFailure::failed(
                     "The kwik page did not offer a download form.",
                 ));
@@ -530,6 +576,7 @@ impl Resolver {
         &self,
         window: &WebviewWindow,
         url: &Url,
+        clock: &mut ChallengeClock,
     ) -> Result<PageSnapshot, ResolverFailure> {
         window.navigate(url.clone()).map_err(|error| {
             ResolverFailure::failed(format!(
@@ -538,7 +585,7 @@ impl Resolver {
             ))
         })?;
 
-        self.wait_for(window, "The page did not load.", |page| {
+        self.wait_for(window, "The page did not load.", clock, |page| {
             same_page(&page.url, url)
         })
         .await
@@ -548,14 +595,14 @@ impl Resolver {
         &self,
         window: &WebviewWindow,
         message: &str,
+        clock: &mut ChallengeClock,
         mut ready: F,
     ) -> Result<PageSnapshot, ResolverFailure>
     where
         F: FnMut(&PageSnapshot) -> bool,
     {
-        let deadline = Instant::now() + NAVIGATION_TIMEOUT;
+        let started = Instant::now();
         let mut surfaced = false;
-        let mut challenge_deadline = None;
 
         loop {
             if let Ok(snapshot) = self.snapshot(window).await {
@@ -564,14 +611,9 @@ impl Resolver {
                         surfaced = true;
                         self.surface_challenge(window);
                     }
-                    let until = *challenge_deadline
-                        .get_or_insert_with(|| Instant::now() + CHALLENGE_TIMEOUT);
-                    if Instant::now() >= until {
-                        return Err(ResolverFailure {
-                            kind: ResolverFailureKind::ChallengeTimedOut,
-                            message: "Cloudflare asked for a human check and the Resolver window was not cleared in time. Try again.".to_owned(),
-                        });
-                    }
+                    // Downloads wait for the user, not a clock. The clock also
+                    // freezes so later page deadlines do not expire meanwhile.
+                    clock.pause();
                     sleep(Duration::from_secs(2)).await;
                     continue;
                 }
@@ -580,12 +622,13 @@ impl Resolver {
                     surfaced = false;
                     self.hide_challenge(window);
                 }
+                clock.resume();
                 if snapshot.ready && ready(&snapshot) {
                     return Ok(snapshot);
                 }
             }
 
-            if Instant::now() >= deadline {
+            if clock.elapsed(started) >= NAVIGATION_TIMEOUT {
                 return Err(ResolverFailure::failed(format!(
                     "{message} Check your connection and try again."
                 )));
@@ -654,11 +697,13 @@ impl Resolver {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        let _ = self.challenge.send(true);
         self.emit_status(ResolverPhase::Challenge);
     }
 
     fn hide_challenge(&self, window: &WebviewWindow) {
         let _ = window.hide();
+        let _ = self.challenge.send(false);
         self.emit_status(ResolverPhase::Idle);
     }
 

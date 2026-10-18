@@ -10,9 +10,9 @@ mod settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use download::{Job as DownloadJob, Request as DownloadRequest};
+use download::Request as DownloadRequest;
 use library::{Library, LibraryAnime, OwnedEpisode};
-use queue::{Enqueued, Queue};
+use queue::{Enqueued, Queue, QueueSnapshot};
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
 use tauri::{Emitter, Manager};
@@ -135,8 +135,24 @@ fn normalize_request(mut request: DownloadRequest) -> Result<DownloadRequest, St
 }
 
 #[tauri::command]
-fn load_queue(queue: tauri::State<'_, Arc<Queue>>) -> Vec<DownloadJob> {
-    queue.jobs()
+fn load_queue(queue: tauri::State<'_, Arc<Queue>>) -> QueueSnapshot {
+    queue.snapshot()
+}
+
+/// Starts the worker for jobs that were restored after a restart.
+#[tauri::command]
+fn start_queue(queue: tauri::State<'_, Arc<Queue>>) -> QueueSnapshot {
+    queue.start()
+}
+
+/// Resumes an interrupted or paused job, or retries a failed one.
+#[tauri::command]
+fn resume_download(
+    queue: tauri::State<'_, Arc<Queue>>,
+    job_id: String,
+) -> Result<QueueSnapshot, String> {
+    queue.resume(&job_id)?;
+    Ok(queue.snapshot())
 }
 
 #[tauri::command]
@@ -174,16 +190,29 @@ pub fn run() {
                 .unwrap_or_else(|_| PathBuf::from("animepahe"));
 
             app.manage(Store::load(app_data_dir.clone(), library_folder));
-            app.manage(Resolver::new(app.handle().clone()));
+            let resolver = Resolver::new(app.handle().clone());
+            let mut challenge = resolver.challenge_watch();
+            app.manage(resolver);
             app.manage(Library::open(app_data_dir.join(library::INDEX_FILE)));
 
-            let queue = Arc::new(Queue::new({
+            let queue = Arc::new(Queue::open(app_data_dir.join(queue::QUEUE_FILE), {
                 let handle = app.handle().clone();
                 move |job| {
                     let _ = handle.emit(download::EVENT, job);
                 }
             }));
             app.manage(Arc::clone(&queue));
+
+            // A Challenge pauses the queue while the user clears it; clearance
+            // resumes the running job and lets later jobs start.
+            tauri::async_runtime::spawn({
+                let queue = Arc::clone(&queue);
+                async move {
+                    while challenge.changed().await.is_ok() {
+                        queue.set_challenge(*challenge.borrow_and_update());
+                    }
+                }
+            });
 
             // The scan is local and fast; enrichment waits until the Library
             // view asks for it so startup never depends on the network.
@@ -205,7 +234,6 @@ pub fn run() {
                             let settings = handle.state::<Store>().get();
                             let folder = PathBuf::from(settings.library_folder);
                             let base_url = settings.base_url;
-                            let resolver = handle.state::<Resolver>();
                             let quality = request.quality.clone();
                             let anime_id = request.anime_id.clone();
                             let session = request.session.clone();
@@ -216,16 +244,26 @@ pub fn run() {
                                 &request,
                                 &folder,
                                 &download::Disk,
-                                || async move {
-                                    resolver
-                                        .resolve_source(&base_url, &anime_id, &session, &quality)
-                                        .await
-                                        .map(|source| download::Resolved {
-                                            cdn_url: source.cdn_url,
-                                            quality: source.quality,
-                                            group: source.group,
-                                        })
-                                        .map_err(|failure| failure.message)
+                                || {
+                                    let handle = handle.clone();
+                                    let base_url = base_url.clone();
+                                    let anime_id = anime_id.clone();
+                                    let session = session.clone();
+                                    let quality = quality.clone();
+                                    async move {
+                                        handle
+                                            .state::<Resolver>()
+                                            .resolve_source(
+                                                &base_url, &anime_id, &session, &quality,
+                                            )
+                                            .await
+                                            .map(|source| download::Resolved {
+                                                cdn_url: source.cdn_url,
+                                                quality: source.quality,
+                                                group: source.group,
+                                            })
+                                            .map_err(|failure| failure.message)
+                                    }
                                 },
                                 |job| queue.report(job),
                             )
@@ -252,6 +290,8 @@ pub fn run() {
             enrich_library,
             enqueue_downloads,
             load_queue,
+            start_queue,
+            resume_download,
             owned_episodes
         ])
         .run(tauri::generate_context!())
