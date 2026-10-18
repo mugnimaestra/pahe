@@ -1,0 +1,14 @@
+GLOSSARY.md
+  h_2d220f5439def3 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "070ae1a8f2628daf7b80bcb4f66a5c0cce77a754",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
