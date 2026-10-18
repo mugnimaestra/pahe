@@ -128,8 +128,8 @@ impl Library {
     }
 
     /// Looks up the Anime behind each unenriched title slug and caches its
-    /// identity, humanized title, and poster URL in the index. A failed or
-    /// empty search leaves the item in place for the placeholder to cover.
+    /// identity and poster URL in the index. A failed or empty search leaves
+    /// the item in place for the placeholder to cover.
     pub async fn enrich<F, Fut>(&self, search: F) -> Result<Vec<LibraryAnime>, String>
     where
         F: Fn(String) -> Fut,
@@ -644,7 +644,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enrichment_caches_the_matched_identity_title_and_poster() {
+    async fn enrichment_caches_the_matched_identity_and_poster() {
         let shelf = Shelf::new();
         for name in [ONE, TWO, THREE] {
             shelf.touch(name);
