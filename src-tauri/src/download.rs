@@ -499,16 +499,30 @@ mod tests {
             while let Ok((mut socket, _)) = listener.accept().await {
                 let body = body.clone();
                 tokio::spawn(async move {
-                    let mut buffer = [0u8; 2048];
-                    let read = socket.read(&mut buffer).await.unwrap_or(0);
-                    let request = String::from_utf8_lossy(&buffer[..read]);
-                    let head = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-length: {declared}\r\nconnection: close\r\n\r\n"
-                    );
-                    let _ = socket.write_all(head.as_bytes()).await;
-                    if request.starts_with("GET") {
-                        let _ = socket.write_all(&body).await;
+                    // A single read can stop mid-request line, so read until the
+                    // blank line that ends the headers before answering.
+                    let mut buffer = Vec::new();
+                    loop {
+                        let mut chunk = [0u8; 1024];
+                        match socket.read(&mut chunk).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(read) => {
+                                buffer.extend_from_slice(&chunk[..read]);
+                                if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                        }
                     }
+                    let request = String::from_utf8_lossy(&buffer);
+                    let mut response = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-length: {declared}\r\nconnection: close\r\n\r\n"
+                    )
+                    .into_bytes();
+                    if request.starts_with("GET") {
+                        response.extend_from_slice(&body);
+                    }
+                    let _ = socket.write_all(&response).await;
                     let _ = socket.shutdown().await;
                 });
             }
