@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   ipc,
   type SearchFailure,
+  type SearchFailureKind,
   type SearchResult,
 } from "../ipc/client";
 import { messageOf } from "../message";
@@ -14,14 +15,24 @@ type State =
   | { kind: "unreachable"; message: string }
   | { kind: "error"; message: string };
 
+function isFailureKind(value: unknown): value is SearchFailureKind {
+  return (
+    value === "unreachable" ||
+    value === "challengeTimedOut" ||
+    value === "failed"
+  );
+}
+
 function failureOf(error: unknown): SearchFailure {
   if (
     typeof error === "object" &&
     error !== null &&
     "kind" in error &&
-    "message" in error
+    isFailureKind(error.kind) &&
+    "message" in error &&
+    typeof error.message === "string"
   ) {
-    return error as SearchFailure;
+    return { kind: error.kind, message: error.message };
   }
   return { kind: "failed", message: messageOf(error) };
 }

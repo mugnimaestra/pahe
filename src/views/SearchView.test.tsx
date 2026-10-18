@@ -108,6 +108,17 @@ describe("search view", () => {
     expect(screen.queryByText(/Cloudflare needs a human check/)).toBeNull();
   });
 
+  it("falls back when a failure payload is malformed", async () => {
+    mocked.searchAnime.mockRejectedValue({ kind: "weird", message: 42 });
+    render(<SearchView />);
+
+    search("seitokai");
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Something went wrong.",
+    );
+  });
+
   it("surfaces an unexpected failure", async () => {
     mocked.searchAnime.mockRejectedValue(new Error("boom"));
     render(<SearchView />);
