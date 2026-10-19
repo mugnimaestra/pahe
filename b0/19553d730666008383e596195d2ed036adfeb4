@@ -1,0 +1,52 @@
+src-tauri/src/download.rs
+  h_2d220f5439def3 43-77,92-109,122-124,147,177-183,203,207-208,214,217,231,243,251,262-265,269,292,295-303,320,332,338,341-342,379-382,402,405-406,411-412,431,438,453,456-457,469-471,477,480-481,487,491-492,497,501-502,510,575,580-581,862-951,1026,1159
+src-tauri/src/lib.rs
+  h_2d220f5439def3 15,17,43,46,48-50,52,54-59,63-71,140,145,148,161-172,256,328,349,367-393
+src-tauri/src/probe.rs
+  h_2d220f5439def3 1,12-13,17-27,108-126,200-263
+src-tauri/src/queue.rs
+  h_2d220f5439def3 199,1000,1006,1023
+src-tauri/src/resolver.rs
+  h_2d220f5439def3 17,19,82,102-109,207,241,251,259-278,343-344,353-354,437,462,818-821
+src-tauri/src/settings.rs
+  h_2d220f5439def3 8-19,26-27,35-36,56,82-83,102-103,123-131,150,174-175,182-241,271,303,324,348
+src/App.test.tsx
+  h_2d220f5439def3 22,25,28-29
+src/downloads.test.ts
+  h_2d220f5439def3 15
+src/downloads.ts
+  h_2d220f5439def3 3-5
+src/failure.test.ts
+  h_2d220f5439def3 1-80
+src/failure.ts
+  h_2d220f5439def3 1-6,12,32-48
+src/ipc/client.test.ts
+  h_2d220f5439def3 11,34,37-38
+src/ipc/client.ts
+  h_2d220f5439def3 7-9,12-20,30,88-89,92-100,157-159
+src/views/AnimeDetailView.test.tsx
+  h_2d220f5439def3 9,58,89-94,199-226
+src/views/AnimeDetailView.tsx
+  h_2d220f5439def3 3,15,36,64-80,135,326
+src/views/QueueView.test.tsx
+  h_2d220f5439def3 38,190,205-207,211-276
+src/views/QueueView.tsx
+  h_2d220f5439def3 5,156,160-165,167-172
+src/views/SearchView.test.tsx
+  h_2d220f5439def3 10,43-48
+src/views/SettingsView.test.tsx
+  h_2d220f5439def3 1-163
+src/views/SettingsView.tsx
+  h_2d220f5439def3 2-8,11-21,24-25,37,47,49-50,55-70,72,74,82-84,96-116,120,125-126,128-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b019553d730666008383e596195d2ed036adfeb4",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
