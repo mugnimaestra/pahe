@@ -85,6 +85,7 @@ jobs:
           mapfile -t assets < <(find bundles -type f \
             \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' -o -name '*.msi' \))
           gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "pahe $GITHUB_REF_NAME" \
             --notes "Unsigned builds for macOS, Windows, and Linux. Deep verification steps: docs/manual-smoke-checklist.md in the repository." \
