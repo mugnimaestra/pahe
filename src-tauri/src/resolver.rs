@@ -210,6 +210,7 @@ pub struct Resolver {
     proxy: Mutex<Option<ProxyHandle>>,
     policy: Mutex<ProxyPolicy>,
     posters: Posters,
+    user_agent_override: Mutex<String>,
     user_agent: Mutex<Option<String>>,
     redirects: Arc<RedirectGate>,
     challenge: watch::Sender<bool>,
@@ -242,7 +243,7 @@ impl ChallengeClock {
 }
 
 impl Resolver {
-    pub fn new(app: AppHandle, policy: ProxyPolicy) -> Self {
+    pub fn new(app: AppHandle, policy: ProxyPolicy, user_agent: String) -> Self {
         let (challenge, _) = watch::channel(false);
 
         Self {
@@ -254,10 +255,26 @@ impl Resolver {
             proxy: Mutex::new(None),
             policy: Mutex::new(policy),
             posters: Posters::new(),
+            user_agent_override: Mutex::new(user_agent),
             user_agent: Mutex::new(None),
             redirects: Arc::new(RedirectGate::default()),
             challenge,
         }
+    }
+
+    /// Applies the Settings User-Agent. Changing it drops the cached
+    /// User-Agent and the Resolver window, so the next resolution builds with
+    /// the new one. An empty value means the system default.
+    pub async fn set_user_agent(&self, user_agent: String) {
+        let mut current = self.user_agent_override.lock().await;
+        if *current == user_agent {
+            return;
+        }
+        *current = user_agent;
+        drop(current);
+
+        *self.user_agent.lock().await = None;
+        self.destroy_window().await;
     }
 
     /// Applies the Settings proxy policy. Changing it drops the cached probe
@@ -900,6 +917,11 @@ impl Resolver {
             let proxy_url = Url::parse(&proxy)
                 .map_err(|_| ResolverFailure::failed("Could not start the local proxy."))?;
             builder = builder.proxy_url(proxy_url);
+        }
+
+        let user_agent = self.user_agent_override.lock().await.clone();
+        if !user_agent.is_empty() {
+            builder = builder.user_agent(&user_agent);
         }
 
         let window = builder.build().map_err(|error| {

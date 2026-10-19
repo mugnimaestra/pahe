@@ -43,7 +43,7 @@ second launch.
       crash, no blank window, no unhandled-error dialog.
 - [ ] Settings shows the expected defaults: Base URL
       `https://animepahe.pw`, Library folder `<Downloads>/animepahe`, Default
-      Quality `1080p`, Proxy `Auto`.
+      Quality `1080p`, Proxy `Auto`, Resolver User-Agent empty.
 - [ ] Library lists the Episodes already in the Library folder (the app adopts
       `AnimePahe_*.mp4` files from the CLI without renaming them). Count the
       groups against the folder once; afterwards the app should agree with the
@@ -64,10 +64,13 @@ second launch.
 - [ ] With the app up, search a common title and open a result. Somewhere on
       this path — search, Anime detail, or the first Download job — Cloudflare
       may present a human check.
-- [ ] When it does: the **Resolver window** surfaces by itself, the view that
-      is waiting shows *Cloudflare needs a human check. The Resolver window is
-      open — finish the check and … will continue*, and the search or download
-      does **not** fail while the check is pending.
+- [ ] Silent first: the check is given up to ~20 seconds to clear itself with
+      the Resolver window left hidden. When it clears — a passive managed check
+      — the search or Download job simply continues and no window ever appears.
+- [ ] When it does not clear in that budget: the **Resolver window** surfaces
+      by itself, the view that is waiting shows *Cloudflare needs a human check.
+      The Resolver window is open — finish the check and … will continue*, and
+      the search or download does **not** fail while the check is pending.
 - [ ] Clear the check in the Resolver window (the widget is a page-level
       challenge: if the homepage shows nothing, navigate inside the window once
       — a document navigation is what triggers it for this egress).
@@ -93,6 +96,11 @@ second launch.
       The app clears the old clearance and opens the Resolver for the new
       origin — the new origin gets its own check, and the old one cannot leak
       cookies across.
+- [ ] Resolver User-Agent: put a standard desktop Chrome User-Agent in Settings
+      and save, then search. The Resolver window is rebuilt with it, and
+      Cloudflare may present a fresh check (the old clearance belongs to the
+      old identity). Record what happened; empty the field, save, and confirm
+      the system default comes back.
 - [ ] Force a check on purpose (delete the app's data for the origin, or clear
       the cookies in the Resolver window with devtools if you have them open)
       and confirm the flow in section 2 repeats cleanly. A Challenge is not a

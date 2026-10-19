@@ -7,6 +7,8 @@ export interface Settings {
   /** The Quality new Download jobs start from. */
   defaultQuality: string;
   proxy: ProxyPolicy;
+  /** The Resolver webview's User-Agent. Empty keeps the system default. */
+  resolverUserAgent: string;
 }
 
 /** When the Resolver uses pahe's local DoH proxy. */

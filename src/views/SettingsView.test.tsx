@@ -20,6 +20,7 @@ const SETTINGS: Settings = {
   libraryFolder: "/Users/me/Downloads/animepahe",
   defaultQuality: "1080p",
   proxy: "auto",
+  resolverUserAgent: "",
 };
 
 function value(label: string): string {
@@ -45,6 +46,7 @@ describe("settings view", () => {
     expect(value("Library folder")).toBe("/Users/me/Downloads/animepahe");
     expect(value("Default Quality")).toBe("1080p");
     expect(value("Proxy policy")).toBe("auto");
+    expect(value("Resolver User-Agent")).toBe("");
   });
 
   it("saves every edited setting through the IPC client", async () => {
@@ -59,6 +61,9 @@ describe("settings view", () => {
     });
     choose("Default Quality", "720p");
     choose("Proxy policy", "always");
+    fireEvent.change(screen.getByLabelText("Resolver User-Agent"), {
+      target: { value: "Mozilla/5.0 (Macintosh) Chrome/141.0.0.0" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -67,6 +72,7 @@ describe("settings view", () => {
         libraryFolder: "/media/anime",
         defaultQuality: "720p",
         proxy: "always",
+        resolverUserAgent: "Mozilla/5.0 (Macintosh) Chrome/141.0.0.0",
       }),
     );
     expect((await screen.findByRole("status")).textContent).toBe(

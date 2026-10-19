@@ -36,6 +36,7 @@ describe("ipc", () => {
       libraryFolder: "/Users/me/Downloads/animepahe",
       defaultQuality: "1080p",
       proxy: "auto",
+      resolverUserAgent: "",
     };
     invoke.mockResolvedValue(settings);
 

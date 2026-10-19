@@ -27,6 +27,7 @@ const SETTINGS: Settings = {
   libraryFolder: "/Users/me/Downloads/animepahe",
   defaultQuality: "1080p",
   proxy: "auto",
+  resolverUserAgent: "",
 };
 
 describe("app shell", () => {

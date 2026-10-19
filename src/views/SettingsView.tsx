@@ -167,6 +167,23 @@ export default function SettingsView() {
             Poisoned resolver. Always forces it; Never keeps it off.
           </p>
 
+          <label htmlFor="resolver-user-agent">Resolver User-Agent</label>
+          <input
+            id="resolver-user-agent"
+            value={settings.resolverUserAgent}
+            onChange={(event) =>
+              setSettings({
+                ...settings,
+                resolverUserAgent: event.currentTarget.value,
+              })
+            }
+          />
+          <p className="muted">
+            What the Resolver window tells animepahe it is. Empty uses the
+            system default; a standard desktop Chrome User-Agent sometimes gets
+            past Cloudflare with fewer checks.
+          </p>
+
           {notice?.kind === "saved" && <p role="status">Settings saved.</p>}
           {notice?.kind === "clean" && (
             <p role="status">

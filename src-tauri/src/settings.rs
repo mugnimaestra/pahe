@@ -25,6 +25,8 @@ pub struct Settings {
     pub library_folder: String,
     pub default_quality: String,
     pub proxy: ProxyPolicy,
+    /// What the Resolver webview says it is. Empty keeps the system default.
+    pub resolver_user_agent: String,
 }
 
 impl Default for Settings {
@@ -34,6 +36,7 @@ impl Default for Settings {
             library_folder: String::new(),
             default_quality: DEFAULT_QUALITY.to_owned(),
             proxy: ProxyPolicy::Auto,
+            resolver_user_agent: String::new(),
         }
     }
 }
@@ -81,6 +84,7 @@ impl Store {
             library_folder: normalize_library_folder(&settings.library_folder)?,
             default_quality: normalize_default_quality(&settings.default_quality)?,
             proxy: settings.proxy,
+            resolver_user_agent: settings.resolver_user_agent.trim().to_owned(),
         };
         let mut current = self.current.lock().expect("settings lock poisoned");
 
@@ -173,6 +177,7 @@ mod tests {
                 library_folder: "/media/anime".to_owned(),
                 default_quality: "720p".to_owned(),
                 proxy: ProxyPolicy::Never,
+                resolver_user_agent: "Mozilla/5.0 (Macintosh) Chrome/141.0.0.0".to_owned(),
             })
             .unwrap();
 
@@ -181,6 +186,25 @@ mod tests {
         assert_eq!(store.get().library_folder, "/media/anime");
         assert_eq!(store.get().default_quality, "720p");
         assert_eq!(store.get().proxy, ProxyPolicy::Never);
+        assert_eq!(
+            store.get().resolver_user_agent,
+            "Mozilla/5.0 (Macintosh) Chrome/141.0.0.0"
+        );
+    }
+
+    #[test]
+    fn save_trims_the_resolver_user_agent() {
+        let dir = TempDir::new().unwrap();
+        let store = restart(&dir);
+
+        let saved = store
+            .save(Settings {
+                resolver_user_agent: "  Mozilla/5.0 (Macintosh)  ".to_owned(),
+                ..settings(DEFAULT_BASE_URL)
+            })
+            .unwrap();
+
+        assert_eq!(saved.resolver_user_agent, "Mozilla/5.0 (Macintosh)");
     }
 
     #[test]
@@ -191,6 +215,11 @@ mod tests {
 
         assert_eq!(store.get().default_quality, DEFAULT_QUALITY);
         assert_eq!(store.get().proxy, ProxyPolicy::Auto);
+        assert_eq!(
+            store.get().resolver_user_agent,
+            "",
+            "an empty User-Agent keeps the system default"
+        );
     }
 
     #[test]
@@ -206,6 +235,7 @@ mod tests {
 
         assert_eq!(store.get().default_quality, DEFAULT_QUALITY);
         assert_eq!(store.get().proxy, ProxyPolicy::Auto);
+        assert_eq!(store.get().resolver_user_agent, "");
     }
 
     #[test]

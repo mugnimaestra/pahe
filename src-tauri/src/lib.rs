@@ -47,9 +47,13 @@ async fn save_settings(
     let saved = store.save(settings)?;
 
     // A new Base URL clears the Resolver's cookies and probe cache; a new proxy
-    // policy rebuilds the Resolver window; a new Library folder re-scans.
+    // policy or User-Agent rebuilds the Resolver window; a new Library folder
+    // re-scans.
     resolver.base_url_changed(&saved.base_url).await;
     resolver.set_proxy_policy(saved.proxy).await;
+    resolver
+        .set_user_agent(saved.resolver_user_agent.clone())
+        .await;
     allow_library(&app, Path::new(&saved.library_folder));
     if saved.library_folder != previous.library_folder
         && let Err(error) = library.refresh(Path::new(&saved.library_folder))
@@ -253,7 +257,14 @@ pub fn run() {
             app.manage(Store::load(app_data_dir.clone(), library_folder));
             let folder = app.state::<Store>().get().library_folder;
             allow_library(app, Path::new(&folder));
-            let resolver = Resolver::new(app.handle().clone(), app.state::<Store>().get().proxy);
+            let resolver = {
+                let settings = app.state::<Store>().get();
+                Resolver::new(
+                    app.handle().clone(),
+                    settings.proxy,
+                    settings.resolver_user_agent,
+                )
+            };
             let mut challenge = resolver.challenge_watch();
             app.manage(resolver);
             app.manage(Library::open(app_data_dir.join(library::INDEX_FILE)));

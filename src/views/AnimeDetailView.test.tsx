@@ -91,6 +91,7 @@ describe("anime detail view", () => {
       libraryFolder: "/Users/me/Downloads/animepahe",
       defaultQuality: "1080p",
       proxy: "auto",
+      resolverUserAgent: "",
     });
     mocked.ownedEpisodes.mockResolvedValue([]);
     mocked.enqueueDownloads.mockResolvedValue(enqueued());
@@ -202,6 +203,7 @@ describe("anime detail view", () => {
       libraryFolder: "/Users/me/Downloads/animepahe",
       defaultQuality: "720p",
       proxy: "auto",
+      resolverUserAgent: "",
     });
     mocked.loadAnime.mockResolvedValue(DETAIL);
     mocked.enqueueDownloads.mockResolvedValue(enqueued({ jobs: [job()] }));
