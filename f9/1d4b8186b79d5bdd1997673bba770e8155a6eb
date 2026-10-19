@@ -1,0 +1,14 @@
+src-tauri/src/resolver.rs
+  h_2d220f5439def3 678-679,719,1267-1276,2290-2302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f91d4b8186b79d5bdd1997673bba770e8155a6eb",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
