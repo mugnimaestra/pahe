@@ -6,6 +6,7 @@ vi.mock("../ipc/client", () => ({
   ipc: {
     fetchPoster: vi.fn(),
     loadAnime: vi.fn(),
+    getSettings: vi.fn(),
     onResolverStatus: vi.fn(),
     onDownloadJob: vi.fn(),
     ownedEpisodes: vi.fn(),
@@ -54,6 +55,7 @@ function job(overrides: Partial<DownloadJob> = {}): DownloadJob {
     state: "running",
     progress: null,
     error: null,
+    failure: null,
     ...overrides,
   };
 }
@@ -84,6 +86,12 @@ describe("anime detail view", () => {
       return () => {};
     });
     mocked.fetchPoster.mockResolvedValue("data:image/webp;base64,abc");
+    mocked.getSettings.mockResolvedValue({
+      baseUrl: "https://animepahe.pw",
+      libraryFolder: "/Users/me/Downloads/animepahe",
+      defaultQuality: "1080p",
+      proxy: "auto",
+    });
     mocked.ownedEpisodes.mockResolvedValue([]);
     mocked.enqueueDownloads.mockResolvedValue(enqueued());
   });
@@ -186,6 +194,34 @@ describe("anime detail view", () => {
       (screen.getByLabelText("Quality for Episode 1") as HTMLSelectElement)
         .value,
     ).toBe("1080p");
+  });
+
+  it("starts a new Download at the saved Default Quality", async () => {
+    mocked.getSettings.mockResolvedValue({
+      baseUrl: "https://animepahe.pw",
+      libraryFolder: "/Users/me/Downloads/animepahe",
+      defaultQuality: "720p",
+      proxy: "auto",
+    });
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.enqueueDownloads.mockResolvedValue(enqueued({ jobs: [job()] }));
+    renderDetail();
+
+    expect(
+      (
+        (await screen.findByLabelText(
+          "Quality for Episode 1",
+        )) as HTMLSelectElement
+      ).value,
+    ).toBe("720p");
+
+    fireEvent.click(screen.getByRole("button", { name: "Download Episode 2" }));
+
+    await waitFor(() =>
+      expect(mocked.enqueueDownloads).toHaveBeenCalledWith([
+        expect.objectContaining({ episode: 2, quality: "720p" }),
+      ]),
+    );
   });
 
   it("enqueues a 1080p Download for the Episode and its Session", async () => {

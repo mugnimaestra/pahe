@@ -4,7 +4,19 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 export interface Settings {
   baseUrl: string;
   libraryFolder: string;
+  /** The Quality new Download jobs start from. */
+  defaultQuality: string;
+  proxy: ProxyPolicy;
 }
+
+/** When the Resolver uses pahe's local DoH proxy. */
+export type ProxyPolicy = "auto" | "always" | "never";
+
+/**
+ * The verdict of a TLS probe against a Base URL: `clean` is reachable, and
+ * `poisoned` means the address does not belong to the host.
+ */
+export type ProbeOutcome = "clean" | "poisoned" | "unreachable";
 
 export interface SearchResult {
   animeId: string;
@@ -15,6 +27,7 @@ export interface SearchResult {
 
 export type ResolverFailureKind =
   | "unreachable"
+  | "deadSource"
   | "challengeTimedOut"
   | "failed";
 
@@ -72,7 +85,18 @@ export interface DownloadJob {
   state: DownloadState;
   progress: DownloadProgress | null;
   error: string | null;
+  /** Why the job failed, when it did. */
+  failure: FailureReason | null;
 }
+
+/** Why a Download job failed, so the UI can name the state. */
+export type FailureReason =
+  | "deadSource"
+  | "expiredCdnUrl"
+  | "insufficientDisk"
+  | "unreachable"
+  | "challengeTimedOut"
+  | "failed";
 
 export interface DownloadRequest {
   animeId: string;
@@ -130,6 +154,9 @@ export const ipc = {
   getSettings: (): Promise<Settings> => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings): Promise<Settings> =>
     invoke<Settings>("save_settings", { settings }),
+  /** Probes a Base URL: reachable, Poisoned resolver, or no answer. */
+  testBaseUrl: (baseUrl: string): Promise<ProbeOutcome> =>
+    invoke<ProbeOutcome>("test_base_url", { baseUrl }),
   searchAnime: (query: string): Promise<SearchResult[]> =>
     invoke<SearchResult[]>("search_anime", { query }),
   loadAnime: (animeId: string): Promise<AnimeDetail> =>

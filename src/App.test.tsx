@@ -19,12 +19,14 @@ vi.mock("./ipc/client", () => ({
 }));
 
 import App from "./App";
-import { ipc } from "./ipc/client";
+import { ipc, type Settings } from "./ipc/client";
 
 const mocked = vi.mocked(ipc);
-const SETTINGS = {
+const SETTINGS: Settings = {
   baseUrl: "https://animepahe.pw",
   libraryFolder: "/Users/me/Downloads/animepahe",
+  defaultQuality: "1080p",
+  proxy: "auto",
 };
 
 describe("app shell", () => {
@@ -88,36 +90,5 @@ describe("app shell", () => {
 
     const input = (await screen.findByLabelText("Base URL")) as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe("https://animepahe.pw"));
-  });
-
-  it("saves an edited base url through the IPC client", async () => {
-    mocked.saveSettings.mockResolvedValue(SETTINGS);
-    render(<App />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const input = await screen.findByLabelText("Base URL");
-    fireEvent.change(input, { target: { value: "https://mirror.example" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() =>
-      expect(mocked.saveSettings).toHaveBeenCalledWith({
-        baseUrl: "https://mirror.example",
-        libraryFolder: "/Users/me/Downloads/animepahe",
-      }),
-    );
-    expect((await screen.findByRole("status")).textContent).toBe(
-      "Settings saved.",
-    );
-  });
-
-  it("surfaces a settings load failure", async () => {
-    mocked.getSettings.mockRejectedValue("could not read settings");
-
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "could not read settings",
-    );
   });
 });

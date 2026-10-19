@@ -196,6 +196,7 @@ impl Queue {
                 JobState::Interrupted | JobState::Paused | JobState::Failed | JobState::Queued => {
                     job.state = JobState::Queued;
                     job.error = None;
+                    job.failure = None;
                 }
                 JobState::Running => {
                     return Err("That Download job is already running.".to_owned());
@@ -996,11 +997,13 @@ mod tests {
                         let attempt = attempts.fetch_add(1, Ordering::SeqCst);
                         async move {
                             if attempt == 0 {
+                                job.failure = Some(crate::download::FailureReason::Failed);
                                 job.state = JobState::Failed;
                                 job.error = Some("The connection dropped.".to_owned());
                             } else {
                                 job.state = JobState::Completed;
                                 job.error = None;
+                                job.failure = None;
                             }
                             job
                         }
@@ -1017,6 +1020,7 @@ mod tests {
         let retried = queue.resume(&id).unwrap();
         assert_eq!(retried.state, JobState::Queued);
         assert_eq!(retried.error, None);
+        assert_eq!(retried.failure, None);
 
         wait_until(&queue, |jobs| {
             jobs.iter().all(|job| job.state == JobState::Completed)

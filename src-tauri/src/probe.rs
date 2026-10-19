@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::net::IpAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -8,8 +9,21 @@ use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 use url::Url;
 
+use crate::settings::ProxyPolicy;
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What the Resolver window must do about the local proxy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxyPlan {
+    /// Reach the Base URL directly.
+    Direct,
+    /// Tunnel through the local DoH proxy.
+    Proxy,
+    /// No Base URL to reach at all.
+    Unreachable,
+}
 
 /// The verdict of a TLS probe against the Base URL.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -91,6 +105,25 @@ pub async fn check(base_url: &str) -> ProbeOutcome {
     probe(&url, &SystemDns, &RustlsTls).await
 }
 
+/// The proxy the Resolver must use at the Base URL. A forced policy never
+/// probes: `always` tunnels without asking, `never` stays direct even when the
+/// resolver is Poisoned.
+pub async fn plan_proxy<F, Fut>(policy: ProxyPolicy, probe: F) -> ProxyPlan
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = ProbeOutcome>,
+{
+    match policy {
+        ProxyPolicy::Always => ProxyPlan::Proxy,
+        ProxyPolicy::Never => ProxyPlan::Direct,
+        ProxyPolicy::Auto => match probe().await {
+            ProbeOutcome::Clean => ProxyPlan::Direct,
+            ProbeOutcome::Poisoned => ProxyPlan::Proxy,
+            ProbeOutcome::Unreachable => ProxyPlan::Unreachable,
+        },
+    }
+}
+
 pub struct SystemDns;
 
 impl DnsResolver for SystemDns {
@@ -164,6 +197,70 @@ fn classify(error: &std::io::Error) -> TlsOutcome {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingProbe {
+        outcome: ProbeOutcome,
+        calls: AtomicUsize,
+    }
+
+    impl CountingProbe {
+        fn new(outcome: ProbeOutcome) -> Self {
+            Self {
+                outcome,
+                calls: AtomicUsize::new(0),
+            }
+        }
+
+        async fn probe(&self) -> ProbeOutcome {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.outcome
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_uses_the_proxy_only_for_a_poisoned_resolver() {
+        let clean = CountingProbe::new(ProbeOutcome::Clean);
+        assert_eq!(
+            plan_proxy(ProxyPolicy::Auto, || clean.probe()).await,
+            ProxyPlan::Direct
+        );
+
+        let poisoned = CountingProbe::new(ProbeOutcome::Poisoned);
+        assert_eq!(
+            plan_proxy(ProxyPolicy::Auto, || poisoned.probe()).await,
+            ProxyPlan::Proxy
+        );
+
+        let unreachable = CountingProbe::new(ProbeOutcome::Unreachable);
+        assert_eq!(
+            plan_proxy(ProxyPolicy::Auto, || unreachable.probe()).await,
+            ProxyPlan::Unreachable
+        );
+        assert_eq!(unreachable.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn always_forces_the_proxy_without_probing() {
+        let probe = CountingProbe::new(ProbeOutcome::Clean);
+
+        assert_eq!(
+            plan_proxy(ProxyPolicy::Always, || probe.probe()).await,
+            ProxyPlan::Proxy
+        );
+        assert_eq!(probe.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn never_keeps_the_proxy_off_however_the_probe_answers() {
+        let probe = CountingProbe::new(ProbeOutcome::Poisoned);
+
+        assert_eq!(
+            plan_proxy(ProxyPolicy::Never, || probe.probe()).await,
+            ProxyPlan::Direct
+        );
+        assert_eq!(probe.calls.load(Ordering::SeqCst), 0);
+    }
 
     struct FakeDns(Result<Vec<IpAddr>, String>);
 

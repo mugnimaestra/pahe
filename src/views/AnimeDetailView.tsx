@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import Poster from "../components/Poster";
-import { progressText, upsertJob } from "../downloads";
+import { progressText, upsertJob, QUALITIES } from "../downloads";
 import { useResolverChallenge } from "../hooks/useResolverChallenge";
 import {
   ipc,
@@ -12,7 +12,7 @@ import {
   type SearchResult,
   type SkippedDownload,
 } from "../ipc/client";
-import { failureOf } from "../failure";
+import { failureOf, failureText } from "../failure";
 import { messageOf } from "../message";
 
 type State =
@@ -21,9 +21,6 @@ type State =
   | { kind: "failed"; message: string };
 
 type Notice = { kind: "info" | "error"; message: string };
-
-const QUALITIES = ["1080p", "720p", "360p"];
-const DEFAULT_QUALITY = "1080p";
 
 interface AnimeDetailViewProps {
   result: SearchResult;
@@ -36,6 +33,7 @@ export default function AnimeDetailView({
 }: AnimeDetailViewProps) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [challenge] = useResolverChallenge();
+  const [defaultQuality, setDefaultQuality] = useState(QUALITIES[0]);
   const [qualities, setQualities] = useState<Record<number, string>>({});
   const [selected, setSelected] = useState<number[]>([]);
   const [owned, setOwned] = useState<OwnedEpisode[]>([]);
@@ -62,6 +60,23 @@ export default function AnimeDetailView({
       active = false;
     };
   }, [result.animeId]);
+
+  useEffect(() => {
+    let active = true;
+
+    ipc
+      .getSettings()
+      .then((settings) => {
+        if (active) setDefaultQuality(settings.defaultQuality);
+      })
+      .catch(() => {
+        // The tallest Quality stands in until Settings can be read.
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -117,7 +132,7 @@ export default function AnimeDetailView({
   }, [result.animeId, result.title]);
 
   function qualityOf(episode: number): string {
-    return qualities[episode] ?? DEFAULT_QUALITY;
+    return qualities[episode] ?? defaultQuality;
   }
 
   function ownedAt(episode: number, quality: string): boolean {
@@ -308,7 +323,7 @@ function EpisodeDownloadStatus({ job }: { job: DownloadJob | undefined }) {
     case "failed":
       return (
         <span role="alert" className="download-error">
-          {job.error ?? "The download failed."}
+          {failureText(job)}
         </span>
       );
     case "running":

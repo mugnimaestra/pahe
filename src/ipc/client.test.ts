@@ -8,7 +8,7 @@ const { invoke, listen, convertFileSrc } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke, convertFileSrc }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
 
-import { ipc } from "./client";
+import { ipc, type Settings } from "./client";
 
 describe("ipc", () => {
   beforeEach(() => {
@@ -31,9 +31,11 @@ describe("ipc", () => {
   });
 
   it("saves settings through the save_settings command", async () => {
-    const settings = {
+    const settings: Settings = {
       baseUrl: "https://mirror.example",
       libraryFolder: "/Users/me/Downloads/animepahe",
+      defaultQuality: "1080p",
+      proxy: "auto",
     };
     invoke.mockResolvedValue(settings);
 

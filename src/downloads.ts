@@ -1,5 +1,8 @@
 import type { DownloadJob, DownloadProgress } from "./ipc/client";
 
+/** The Qualities pahe offers, tallest first. */
+export const QUALITIES = ["1080p", "720p", "360p"];
+
 /** Replaces a job in place, appending one seen for the first time. */
 export function upsertJob(
   jobs: DownloadJob[],

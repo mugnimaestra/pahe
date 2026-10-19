@@ -40,6 +40,41 @@ pub struct Progress {
     pub eta_seconds: Option<u64>,
 }
 
+/// Why a Download job failed, so the UI names the state instead of guessing
+/// from prose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FailureReason {
+    /// No Source of this Episode could produce a CDN URL.
+    DeadSource,
+    /// The CDN URL expired again after one fresh resolution.
+    ExpiredCdnUrl,
+    /// The disk preflight found too little free space.
+    InsufficientDisk,
+    /// The Base URL could not be reached.
+    Unreachable,
+    /// Cloudflare asked for a human check that never came.
+    ChallengeTimedOut,
+    /// Anything else, with its own message.
+    Failed,
+}
+
+/// A failed attempt: what went wrong and the plain-language sentence for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Failure {
+    pub reason: FailureReason,
+    pub message: String,
+}
+
+impl Failure {
+    fn failed(message: impl Into<String>) -> Self {
+        Self {
+            reason: FailureReason::Failed,
+            message: message.into(),
+        }
+    }
+}
+
 /// A request to fetch one Episode at one Quality.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +89,24 @@ pub struct Request {
     pub redownload: bool,
 }
 
+impl Request {
+    /// Checks the request and fills an absent Quality with the Settings
+    /// default, so new Download jobs follow the saved choice.
+    pub fn normalized(mut self, default_quality: &str) -> Result<Self, String> {
+        if self.anime_id.trim().is_empty()
+            || self.session.trim().is_empty()
+            || self.title.trim().is_empty()
+        {
+            return Err("Open the Anime again and pick an Episode.".to_owned());
+        }
+        if self.quality.trim().is_empty() {
+            self.quality = default_quality.to_owned();
+        }
+
+        Ok(self)
+    }
+}
+
 /// A Download job, shaped so the queue can add more of them without changes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +119,9 @@ pub struct Job {
     pub state: JobState,
     pub progress: Option<Progress>,
     pub error: Option<String>,
+    /// The explicit reason behind `error`, when the job failed.
+    #[serde(default)]
+    pub failure: Option<FailureReason>,
 }
 
 impl Job {
@@ -88,6 +144,7 @@ impl Job {
             state: JobState::Queued,
             progress: None,
             error: None,
+            failure: None,
         }
     }
 }
@@ -117,7 +174,13 @@ impl FreeSpace for Disk {
 enum TransferError {
     /// The CDN rejected the URL; a fresh resolution may heal it.
     Expired,
-    Failed(String),
+    Failed(Failure),
+}
+
+impl From<Failure> for TransferError {
+    fn from(failure: Failure) -> Self {
+        Self::Failed(failure)
+    }
 }
 
 /// Resolves the Source, then streams it to `<name>.part` and renames on success.
@@ -137,19 +200,21 @@ pub async fn run<D, F, Fut, G>(
 where
     D: FreeSpace,
     F: Fn() -> Fut,
-    Fut: Future<Output = Result<Resolved, String>>,
+    Fut: Future<Output = Result<Resolved, Failure>>,
     G: Fn(&Job),
 {
     job.state = JobState::Running;
+    job.error = None;
+    job.failure = None;
     report(&job);
 
     if let Err(error) = tokio::fs::create_dir_all(folder).await {
         return fail(
             job,
-            format!(
+            Failure::failed(format!(
                 "Could not create the Library folder {}: {error}",
                 folder.display()
-            ),
+            )),
             &report,
         );
     }
@@ -163,7 +228,7 @@ where
         Err(error) => {
             return fail(
                 job,
-                format!("Could not prepare the download: {error}"),
+                Failure::failed(format!("Could not prepare the download: {error}")),
                 &report,
             );
         }
@@ -175,7 +240,7 @@ where
     loop {
         let source = match resolve().await {
             Ok(source) => source,
-            Err(message) => return fail(job, message, &report),
+            Err(failure) => return fail(job, failure, &report),
         };
         job.quality = source.quality.clone();
 
@@ -183,6 +248,7 @@ where
             Ok(()) => {
                 job.state = JobState::Completed;
                 job.error = None;
+                job.failure = None;
                 report(&job);
                 return job;
             }
@@ -193,11 +259,14 @@ where
             Err(TransferError::Expired) => {
                 return fail(
                     job,
-                    "The CDN link expired again after a fresh resolution. Retry the Download job or pick another Quality.".to_owned(),
+                    Failure {
+                        reason: FailureReason::ExpiredCdnUrl,
+                        message: "The CDN link expired again after a fresh resolution. Retry the Download job or pick another Quality.".to_owned(),
+                    },
                     &report,
                 );
             }
-            Err(TransferError::Failed(message)) => return fail(job, message, &report),
+            Err(TransferError::Failed(failure)) => return fail(job, failure, &report),
         }
     }
 }
@@ -220,14 +289,18 @@ where
 
     if let Some(total) = total {
         let available = disk.available(folder).map_err(|error| {
-            TransferError::Failed(format!("Could not check free disk space: {error}"))
+            Failure::failed(format!("Could not check free disk space: {error}"))
         })?;
         if available < total.saturating_add(DISK_MARGIN) {
-            return Err(TransferError::Failed(format!(
-                "Not enough disk space: this Episode needs {} and only {} is free.",
-                megabytes(total),
-                megabytes(available)
-            )));
+            return Err(Failure {
+                reason: FailureReason::InsufficientDisk,
+                message: format!(
+                    "Not enough disk space: this Episode needs {} and only {} is free.",
+                    megabytes(total),
+                    megabytes(available)
+                ),
+            }
+            .into());
         }
     }
 
@@ -244,9 +317,7 @@ where
     }
     tokio::fs::rename(&part, &final_path)
         .await
-        .map_err(|error| {
-            TransferError::Failed(format!("Could not finish the download: {error}"))
-        })?;
+        .map_err(|error| Failure::failed(format!("Could not finish the download: {error}")))?;
 
     Ok(())
 }
@@ -258,16 +329,17 @@ async fn remote_size(client: &reqwest::Client, url: &str) -> Result<Option<u64>,
         .header(reqwest::header::ACCEPT, "*/*")
         .send()
         .await
-        .map_err(|error| TransferError::Failed(format!("The CDN could not be reached: {error}")))?;
+        .map_err(|error| Failure::failed(format!("The CDN could not be reached: {error}")))?;
 
     if response.status() == reqwest::StatusCode::FORBIDDEN {
         return Err(TransferError::Expired);
     }
     if !response.status().is_success() {
-        return Err(TransferError::Failed(format!(
+        return Err(Failure::failed(format!(
             "The CDN refused the download (HTTP {}).",
             response.status().as_u16()
-        )));
+        ))
+        .into());
     }
 
     // A HEAD response has no body, so reqwest reports no body length; the
@@ -304,9 +376,10 @@ where
             request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
         }
 
-        let mut response = request.send().await.map_err(|error| {
-            TransferError::Failed(format!("The download could not start: {error}"))
-        })?;
+        let mut response = request
+            .send()
+            .await
+            .map_err(|error| Failure::failed(format!("The download could not start: {error}")))?;
 
         let status = response.status();
         if status == reqwest::StatusCode::FORBIDDEN {
@@ -326,17 +399,17 @@ where
         }
 
         if !status.is_success() {
-            return Err(TransferError::Failed(format!(
+            return Err(Failure::failed(format!(
                 "The CDN refused the download (HTTP {}).",
                 status.as_u16()
-            )));
+            ))
+            .into());
         }
 
         let partial = status == reqwest::StatusCode::PARTIAL_CONTENT && resume_from > 0;
         let total = if partial {
-            let (start, total) = content_range(&response).ok_or_else(|| {
-                TransferError::Failed("The CDN sent an incomplete Range response.".to_owned())
-            })?;
+            let (start, total) = content_range(&response)
+                .ok_or_else(|| Failure::failed("The CDN sent an incomplete Range response."))?;
             if start != resume_from {
                 let _ = tokio::fs::remove_file(part).await;
                 resume_from = 0;
@@ -355,14 +428,14 @@ where
                 .open(part)
                 .await
                 .map_err(|error| {
-                    TransferError::Failed(format!(
+                    Failure::failed(format!(
                         "Could not resume the Episode at {}: {error}",
                         part.display()
                     ))
                 })?
         } else {
             tokio::fs::File::create(part).await.map_err(|error| {
-                TransferError::Failed(format!(
+                Failure::failed(format!(
                     "Could not write the Episode to {}: {error}",
                     part.display()
                 ))
@@ -377,10 +450,11 @@ where
             match response.chunk().await {
                 Ok(Some(chunk)) => {
                     if let Err(error) = file.write_all(&chunk).await {
-                        return Err(TransferError::Failed(format!(
+                        return Err(Failure::failed(format!(
                             "Could not write the Episode to {}: {error}",
                             part.display()
-                        )));
+                        ))
+                        .into());
                     }
                     written += chunk.len() as u64;
 
@@ -392,37 +466,40 @@ where
                 }
                 Ok(None) => break,
                 Err(error) => {
-                    return Err(TransferError::Failed(format!(
-                        "The download was interrupted: {error}"
-                    )));
+                    return Err(
+                        Failure::failed(format!("The download was interrupted: {error}")).into(),
+                    );
                 }
             }
         }
 
         if let Err(error) = file.flush().await {
-            return Err(TransferError::Failed(format!(
+            return Err(Failure::failed(format!(
                 "Could not write the Episode to {}: {error}",
                 part.display()
-            )));
+            ))
+            .into());
         }
         drop(file);
 
         if let Some(total) = total {
             if written != total {
-                return Err(TransferError::Failed(format!(
+                return Err(Failure::failed(format!(
                     "The download stopped after {} of {}.",
                     megabytes(written),
                     megabytes(total)
-                )));
+                ))
+                .into());
             }
             // Trust the bytes on disk, not the loop's counter.
             let size = partial_size(part).await;
             if size != total {
-                return Err(TransferError::Failed(format!(
+                return Err(Failure::failed(format!(
                     "The Episode file is {} but the CDN promised {}. Retry the Download job.",
                     megabytes(size),
                     megabytes(total)
-                )));
+                ))
+                .into());
             }
         }
 
@@ -430,9 +507,7 @@ where
         return Ok(());
     }
 
-    Err(TransferError::Failed(
-        "The CDN would not send the whole Episode. Retry the Download job.".to_owned(),
-    ))
+    Err(Failure::failed("The CDN would not send the whole Episode. Retry the Download job.").into())
 }
 
 async fn partial_size(part: &Path) -> u64 {
@@ -497,12 +572,13 @@ fn progress(bytes: u64, total: Option<u64>, elapsed: Duration) -> Progress {
     }
 }
 
-fn fail<G>(mut job: Job, message: String, report: &G) -> Job
+fn fail<G>(mut job: Job, failure: Failure, report: &G) -> Job
 where
     G: Fn(&Job),
 {
     job.state = JobState::Failed;
-    job.error = Some(message);
+    job.error = Some(failure.message);
+    job.failure = Some(failure.reason);
     report(&job);
     job
 }
@@ -783,6 +859,96 @@ mod tests {
         (finished, reports.into_inner().unwrap())
     }
 
+    async fn run_failing_job(failure: Failure) -> Job {
+        let dir = TempDir::new().unwrap();
+        let reports = Mutex::new(Vec::new());
+
+        run(
+            Job::new(&request()),
+            &request(),
+            dir.path(),
+            &FixedDisk(u64::MAX),
+            || {
+                let failure = failure.clone();
+                async move { Err(failure) }
+            },
+            |job| reports.lock().unwrap().push(job.clone()),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_dead_source_fails_the_job_with_the_resolvers_reason() {
+        let job = run_failing_job(Failure {
+            reason: FailureReason::DeadSource,
+            message: "Every download Source for this Episode is dead. kwik timed out.".to_owned(),
+        })
+        .await;
+
+        assert_eq!(job.state, JobState::Failed);
+        assert_eq!(job.failure, Some(FailureReason::DeadSource));
+        assert!(job.error.unwrap().contains("dead"));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_base_url_fails_the_job_with_the_resolvers_reason() {
+        let job = run_failing_job(Failure {
+            reason: FailureReason::Unreachable,
+            message: "Could not reach https://animepahe.pw. Check your connection.".to_owned(),
+        })
+        .await;
+
+        assert_eq!(job.state, JobState::Failed);
+        assert_eq!(job.failure, Some(FailureReason::Unreachable));
+    }
+
+    #[test]
+    fn an_absent_quality_takes_the_settings_default() {
+        let request = Request {
+            quality: "  ".to_owned(),
+            ..request()
+        }
+        .normalized("720p")
+        .unwrap();
+
+        assert_eq!(request.quality, "720p");
+    }
+
+    #[test]
+    fn a_chosen_quality_wins_over_the_settings_default() {
+        let request = request().normalized("720p").unwrap();
+
+        assert_eq!(request.quality, "1080p");
+    }
+
+    #[test]
+    fn a_request_without_an_anime_or_session_is_refused() {
+        assert!(
+            Request {
+                session: "  ".to_owned(),
+                ..request()
+            }
+            .normalized("1080p")
+            .is_err()
+        );
+        assert!(
+            Request {
+                title: String::new(),
+                ..request()
+            }
+            .normalized("1080p")
+            .is_err()
+        );
+        assert!(
+            Request {
+                anime_id: String::new(),
+                ..request()
+            }
+            .normalized("1080p")
+            .is_err()
+        );
+    }
+
     #[tokio::test]
     async fn streams_the_bytes_then_renames_the_part_file() {
         let body = b"the whole episode".to_vec();
@@ -857,6 +1023,7 @@ mod tests {
         let (job, _) = run_job(server.url, folder.clone(), FixedDisk(100 * 1024 * 1024)).await;
 
         assert_eq!(job.state, JobState::Failed);
+        assert_eq!(job.failure, Some(FailureReason::InsufficientDisk));
         assert!(job.error.unwrap().contains("disk space"));
         assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
     }
@@ -989,6 +1156,7 @@ mod tests {
 
         assert_eq!(resolutions.load(Ordering::SeqCst), 2);
         assert_eq!(finished.state, JobState::Failed);
+        assert_eq!(finished.failure, Some(FailureReason::ExpiredCdnUrl));
         assert!(
             finished
                 .error

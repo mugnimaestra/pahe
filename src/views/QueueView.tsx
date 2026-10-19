@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { upsertJob, mergeJobs, progressText } from "../downloads";
 import { useResolverChallenge } from "../hooks/useResolverChallenge";
 import { ipc, type DownloadJob, type QueueSnapshot } from "../ipc/client";
+import { failureText } from "../failure";
 import { messageOf } from "../message";
 
 type State =
@@ -152,12 +153,22 @@ function JobStatus({ job }: { job: DownloadJob }) {
     case "failed":
       return (
         <span role="alert" className="download-error">
-          Failed · {job.error ?? "The download failed."}
+          {failureText(job)}
         </span>
       );
     case "interrupted":
-      return <span className="download-paused">Interrupted</span>;
+      return (
+        <span className="download-paused">
+          Interrupted · pahe closed while this Download ran. Resume restarts it
+          from the beginning.
+        </span>
+      );
     case "paused":
-      return <span className="download-paused">Paused</span>;
+      return (
+        <span className="download-paused">
+          Paused · a Cloudflare check is pending. Finish it in the Resolver
+          window, then Resume.
+        </span>
+      );
   }
 }

@@ -7,6 +7,7 @@ vi.mock("../ipc/client", () => ({
     fetchPoster: vi.fn(),
     searchAnime: vi.fn(),
     loadAnime: vi.fn(),
+    getSettings: vi.fn(),
     onResolverStatus: vi.fn(),
     onDownloadJob: vi.fn(),
     ownedEpisodes: vi.fn(),
@@ -39,6 +40,12 @@ describe("search view", () => {
     mocked.onResolverStatus.mockResolvedValue(() => {});
     mocked.onDownloadJob.mockResolvedValue(() => {});
     mocked.fetchPoster.mockResolvedValue("data:image/jpeg;base64,abc");
+    mocked.getSettings.mockResolvedValue({
+      baseUrl: "https://animepahe.pw",
+      libraryFolder: "/Users/me/Downloads/animepahe",
+      defaultQuality: "1080p",
+      proxy: "auto",
+    });
     mocked.ownedEpisodes.mockResolvedValue([]);
   });
 

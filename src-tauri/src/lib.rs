@@ -12,8 +12,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use download::Request as DownloadRequest;
+use download::{Failure as DownloadFailure, FailureReason, Request as DownloadRequest};
 use library::{Library, LibraryAnime, LibraryItem, OwnedEpisode};
+use probe::ProbeOutcome;
 use queue::{Enqueued, Queue, QueueSnapshot};
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
@@ -39,12 +40,33 @@ async fn save_settings(
     app: tauri::AppHandle,
     store: tauri::State<'_, Store>,
     resolver: tauri::State<'_, Resolver>,
+    library: tauri::State<'_, Library>,
     settings: Settings,
 ) -> Result<Settings, String> {
+    let previous = store.get();
     let saved = store.save(settings)?;
+
+    // A new Base URL clears the Resolver's cookies and probe cache; a new proxy
+    // policy rebuilds the Resolver window; a new Library folder re-scans.
     resolver.base_url_changed(&saved.base_url).await;
+    resolver.set_proxy_policy(saved.proxy).await;
     allow_library(&app, Path::new(&saved.library_folder));
+    if saved.library_folder != previous.library_folder
+        && let Err(error) = library.refresh(Path::new(&saved.library_folder))
+    {
+        eprintln!("library scan: {error}");
+    }
+
     Ok(saved)
+}
+
+/// Probes a Base URL the user is considering, so Settings can tell a dead
+/// mirror from a Poisoned resolver before it is saved.
+#[tauri::command]
+async fn test_base_url(base_url: String) -> Result<ProbeOutcome, String> {
+    let base_url = settings::normalize_base_url(&base_url)?;
+
+    Ok(probe::check(&base_url).await)
 }
 
 #[tauri::command]
@@ -115,13 +137,15 @@ async fn enrich_library(
 /// never here, because a CDN URL expires before a queued job would run.
 #[tauri::command]
 async fn enqueue_downloads(
+    store: tauri::State<'_, Store>,
     queue: tauri::State<'_, Arc<Queue>>,
     library: tauri::State<'_, Library>,
     requests: Vec<DownloadRequest>,
 ) -> Result<Enqueued, String> {
+    let default_quality = store.get().default_quality;
     let requests = requests
         .into_iter()
-        .map(normalize_request)
+        .map(|request| request.normalized(&default_quality))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(queue.enqueue(requests, |request| {
@@ -134,18 +158,19 @@ async fn enqueue_downloads(
     }))
 }
 
-fn normalize_request(mut request: DownloadRequest) -> Result<DownloadRequest, String> {
-    if request.anime_id.trim().is_empty()
-        || request.session.trim().is_empty()
-        || request.title.trim().is_empty()
-    {
-        return Err("Open the Anime again and pick an Episode.".to_owned());
-    }
-    if request.quality.trim().is_empty() {
-        request.quality = "1080p".to_owned();
-    }
+/// Keeps a Resolver failure's state on the Download job, so the UI can name it.
+fn download_failure(failure: ResolverFailure) -> DownloadFailure {
+    let reason = match failure.kind {
+        resolver::ResolverFailureKind::Unreachable => FailureReason::Unreachable,
+        resolver::ResolverFailureKind::DeadSource => FailureReason::DeadSource,
+        resolver::ResolverFailureKind::ChallengeTimedOut => FailureReason::ChallengeTimedOut,
+        resolver::ResolverFailureKind::Failed => FailureReason::Failed,
+    };
 
-    Ok(request)
+    DownloadFailure {
+        reason,
+        message: failure.message,
+    }
 }
 
 #[tauri::command]
@@ -228,7 +253,7 @@ pub fn run() {
             app.manage(Store::load(app_data_dir.clone(), library_folder));
             let folder = app.state::<Store>().get().library_folder;
             allow_library(app, Path::new(&folder));
-            let resolver = Resolver::new(app.handle().clone());
+            let resolver = Resolver::new(app.handle().clone(), app.state::<Store>().get().proxy);
             let mut challenge = resolver.challenge_watch();
             app.manage(resolver);
             app.manage(Library::open(app_data_dir.join(library::INDEX_FILE)));
@@ -300,7 +325,7 @@ pub fn run() {
                                                 quality: source.quality,
                                                 group: source.group,
                                             })
-                                            .map_err(|failure| failure.message)
+                                            .map_err(download_failure)
                                     }
                                 },
                                 |job| queue.report(job),
@@ -321,6 +346,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            test_base_url,
             search_anime,
             load_anime,
             fetch_poster,
@@ -337,4 +363,31 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use resolver::ResolverFailureKind;
+
+    #[test]
+    fn a_resolver_failure_keeps_its_state_on_the_download_job() {
+        for (kind, reason) in [
+            (ResolverFailureKind::Unreachable, FailureReason::Unreachable),
+            (ResolverFailureKind::DeadSource, FailureReason::DeadSource),
+            (
+                ResolverFailureKind::ChallengeTimedOut,
+                FailureReason::ChallengeTimedOut,
+            ),
+            (ResolverFailureKind::Failed, FailureReason::Failed),
+        ] {
+            let failure = download_failure(ResolverFailure {
+                kind,
+                message: "why".to_owned(),
+            });
+
+            assert_eq!(failure.reason, reason);
+            assert_eq!(failure.message, "why");
+        }
+    }
 }

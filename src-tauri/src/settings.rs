@@ -5,12 +5,26 @@ use std::sync::Mutex;
 use url::Url;
 
 pub const DEFAULT_BASE_URL: &str = "https://animepahe.pw";
+pub const DEFAULT_QUALITY: &str = "1080p";
+
+/// When the Resolver tunnels through pahe's local DoH proxy. `Auto` probes the
+/// Base URL and uses the proxy only when the resolver is Poisoned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProxyPolicy {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub base_url: String,
     pub library_folder: String,
+    pub default_quality: String,
+    pub proxy: ProxyPolicy,
 }
 
 impl Default for Settings {
@@ -18,6 +32,8 @@ impl Default for Settings {
         Self {
             base_url: DEFAULT_BASE_URL.to_owned(),
             library_folder: String::new(),
+            default_quality: DEFAULT_QUALITY.to_owned(),
+            proxy: ProxyPolicy::Auto,
         }
     }
 }
@@ -36,8 +52,8 @@ impl Store {
     ) -> Self {
         let path = app_data_dir.into().join(SETTINGS_FILE);
         let default = Settings {
-            base_url: DEFAULT_BASE_URL.to_owned(),
             library_folder: default_library_folder.into().display().to_string(),
+            ..Settings::default()
         };
         let mut current = fs::read_to_string(&path)
             .ok()
@@ -63,6 +79,8 @@ impl Store {
         let settings = Settings {
             base_url: normalize_base_url(&settings.base_url)?,
             library_folder: normalize_library_folder(&settings.library_folder)?,
+            default_quality: normalize_default_quality(&settings.default_quality)?,
+            proxy: settings.proxy,
         };
         let mut current = self.current.lock().expect("settings lock poisoned");
 
@@ -81,7 +99,8 @@ impl Store {
     }
 }
 
-fn normalize_base_url(value: &str) -> Result<String, String> {
+/// Trims and validates a Base URL, returning the form pahe stores.
+pub fn normalize_base_url(value: &str) -> Result<String, String> {
     let base_url = value.trim().trim_end_matches('/');
     let url =
         Url::parse(base_url).map_err(|_| "Base URL must be a valid http(s) URL".to_owned())?;
@@ -99,6 +118,15 @@ fn normalize_library_folder(value: &str) -> Result<String, String> {
     }
 
     Ok(folder.to_owned())
+}
+
+fn normalize_default_quality(value: &str) -> Result<String, String> {
+    let quality = value.trim();
+    if quality.is_empty() {
+        return Err("Default Quality must not be empty".to_owned());
+    }
+
+    Ok(quality.to_owned())
 }
 
 #[cfg(test)]
@@ -119,6 +147,7 @@ mod tests {
         Settings {
             base_url: base_url.to_owned(),
             library_folder: "/library".to_owned(),
+            ..Settings::default()
         }
     }
 
@@ -142,12 +171,74 @@ mod tests {
             .save(Settings {
                 base_url: "https://mirror.example".to_owned(),
                 library_folder: "/media/anime".to_owned(),
+                default_quality: "720p".to_owned(),
+                proxy: ProxyPolicy::Never,
             })
             .unwrap();
 
         let store = restart(&dir);
         assert_eq!(store.get().base_url, "https://mirror.example");
         assert_eq!(store.get().library_folder, "/media/anime");
+        assert_eq!(store.get().default_quality, "720p");
+        assert_eq!(store.get().proxy, ProxyPolicy::Never);
+    }
+
+    #[test]
+    fn defaults_the_quality_and_proxy_policy_when_no_settings_file_exists() {
+        let dir = TempDir::new().unwrap();
+
+        let store = restart(&dir);
+
+        assert_eq!(store.get().default_quality, DEFAULT_QUALITY);
+        assert_eq!(store.get().proxy, ProxyPolicy::Auto);
+    }
+
+    #[test]
+    fn settings_written_before_the_quality_and_proxy_policy_get_defaults() {
+        let dir = TempDir::new().unwrap();
+        fs::write(
+            dir.path().join("settings.json"),
+            r#"{"baseUrl": "https://mirror.example", "libraryFolder": "/media/anime"}"#,
+        )
+        .unwrap();
+
+        let store = restart(&dir);
+
+        assert_eq!(store.get().default_quality, DEFAULT_QUALITY);
+        assert_eq!(store.get().proxy, ProxyPolicy::Auto);
+    }
+
+    #[test]
+    fn an_empty_default_quality_is_rejected_and_not_persisted() {
+        let dir = TempDir::new().unwrap();
+        let store = restart(&dir);
+
+        assert!(
+            store
+                .save(Settings {
+                    default_quality: "  ".to_owned(),
+                    ..settings(DEFAULT_BASE_URL)
+                })
+                .is_err()
+        );
+
+        assert_eq!(store.get().default_quality, DEFAULT_QUALITY);
+        assert_eq!(restart(&dir).get().default_quality, DEFAULT_QUALITY);
+    }
+
+    #[test]
+    fn save_trims_the_default_quality() {
+        let dir = TempDir::new().unwrap();
+        let store = restart(&dir);
+
+        let saved = store
+            .save(Settings {
+                default_quality: "  720p ".to_owned(),
+                ..settings(DEFAULT_BASE_URL)
+            })
+            .unwrap();
+
+        assert_eq!(saved.default_quality, "720p");
     }
 
     #[test]
@@ -177,6 +268,7 @@ mod tests {
             .save(Settings {
                 base_url: "https://animepahe.pw/".to_owned(),
                 library_folder: "/library".to_owned(),
+                ..Settings::default()
             })
             .unwrap();
 
@@ -208,6 +300,7 @@ mod tests {
                     .save(Settings {
                         base_url: invalid.to_owned(),
                         library_folder: "/library".to_owned(),
+                        ..Settings::default()
                     })
                     .is_err(),
                 "{invalid:?} should be rejected"
@@ -228,6 +321,7 @@ mod tests {
                 .save(Settings {
                     base_url: "https://mirror.example".to_owned(),
                     library_folder: "  ".to_owned(),
+                    ..Settings::default()
                 })
                 .is_err()
         );
@@ -251,6 +345,7 @@ mod tests {
             .save(Settings {
                 base_url: "https://animepahe.pw".to_owned(),
                 library_folder: "  /media/anime  ".to_owned(),
+                ..Settings::default()
             })
             .unwrap();
 

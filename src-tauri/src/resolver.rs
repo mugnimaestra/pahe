@@ -14,8 +14,9 @@ use tokio::time::{Instant, sleep, timeout};
 use url::Url;
 
 use crate::poster::{self, Posters};
-use crate::probe::{self, ProbeOutcome};
+use crate::probe::{self, ProbeOutcome, ProxyPlan};
 use crate::proxy::{self, DohLookup, ProxyHandle};
+use crate::settings::ProxyPolicy;
 
 pub const RESOLVER_LABEL: &str = "resolver";
 pub const STATUS_EVENT: &str = "resolver://status";
@@ -78,6 +79,7 @@ pub struct ResolvedSource {
 #[serde(rename_all = "camelCase")]
 pub enum ResolverFailureKind {
     Unreachable,
+    DeadSource,
     ChallengeTimedOut,
     Failed,
 }
@@ -93,6 +95,14 @@ impl ResolverFailure {
     fn failed(message: impl Into<String>) -> Self {
         Self {
             kind: ResolverFailureKind::Failed,
+            message: message.into(),
+        }
+    }
+
+    /// A Source or every Source of an Episode failed to yield a CDN URL.
+    fn dead_source(message: impl Into<String>) -> Self {
+        Self {
+            kind: ResolverFailureKind::DeadSource,
             message: message.into(),
         }
     }
@@ -194,6 +204,7 @@ pub struct Resolver {
     session: Mutex<ResolverWindow>,
     probe: Mutex<Option<(String, ProbeOutcome)>>,
     proxy: Mutex<Option<ProxyHandle>>,
+    policy: Mutex<ProxyPolicy>,
     posters: Posters,
     user_agent: Mutex<Option<String>>,
     redirects: Arc<RedirectGate>,
@@ -227,7 +238,7 @@ impl ChallengeClock {
 }
 
 impl Resolver {
-    pub fn new(app: AppHandle) -> Self {
+    pub fn new(app: AppHandle, policy: ProxyPolicy) -> Self {
         let (challenge, _) = watch::channel(false);
 
         Self {
@@ -237,11 +248,32 @@ impl Resolver {
             }),
             probe: Mutex::new(None),
             proxy: Mutex::new(None),
+            policy: Mutex::new(policy),
             posters: Posters::new(),
             user_agent: Mutex::new(None),
             redirects: Arc::new(RedirectGate::default()),
             challenge,
         }
+    }
+
+    /// Applies the Settings proxy policy. Changing it drops the cached probe
+    /// and the Resolver window, so the next resolution builds with the new one.
+    pub async fn set_proxy_policy(&self, policy: ProxyPolicy) {
+        let mut current = self.policy.lock().await;
+        if *current == policy {
+            return;
+        }
+        *current = policy;
+        drop(current);
+
+        self.forget_probe().await;
+        self.destroy_window().await;
+    }
+
+    /// What the Resolver must do about its local proxy at this Base URL.
+    async fn proxy_plan(&self, base_url: &str) -> ProxyPlan {
+        let policy = *self.policy.lock().await;
+        probe::plan_proxy(policy, || self.probe_outcome(base_url)).await
     }
 
     /// True while a Challenge is surfaced and waiting for the user. The queue
@@ -308,8 +340,8 @@ impl Resolver {
         }
     }
 
-    /// The poster at `url` as a data URL, fetched through the local proxy when
-    /// the probe reports a Poisoned resolver and directly when it is Clean.
+    /// The poster at `url` as a data URL, fetched through the local proxy
+    /// whenever the proxy policy calls for it and directly otherwise.
     ///
     /// The poster host answers a plain HTTP client with a Cloudflare Challenge,
     /// so the fetch borrows the Resolver's User-Agent and clearance cookies.
@@ -318,8 +350,8 @@ impl Resolver {
             return Ok(cached);
         }
 
-        let proxy = match self.probe_outcome(base_url).await {
-            ProbeOutcome::Poisoned => Some(
+        let proxy = match self.proxy_plan(base_url).await {
+            ProxyPlan::Proxy => Some(
                 self.ensure_proxy()
                     .await
                     .map_err(|failure| failure.message)?,
@@ -402,7 +434,7 @@ impl Resolver {
             .unwrap_or_default();
         let sources = sources_from_pairs(pairs);
         if sources.is_empty() {
-            return Err(ResolverFailure::failed(
+            return Err(ResolverFailure::dead_source(
                 "No download Sources are listed for this Episode.",
             ));
         }
@@ -427,7 +459,7 @@ impl Resolver {
         }
 
         let detail = last_error.unwrap_or_else(|| "No Source answered.".to_owned());
-        Err(ResolverFailure::failed(format!(
+        Err(ResolverFailure::dead_source(format!(
             "Every download Source for this Episode is dead. {detail}"
         )))
     }
@@ -783,14 +815,10 @@ impl Resolver {
             session.base_url = base_url.to_owned();
         }
 
-        let outcome = self.probe_outcome(base_url).await;
-        if outcome == ProbeOutcome::Unreachable {
-            return Err(ResolverFailure::unreachable(base_url));
-        }
-
-        let proxy = match outcome {
-            ProbeOutcome::Poisoned => Some(self.ensure_proxy().await?),
-            _ => None,
+        let proxy = match self.proxy_plan(base_url).await {
+            ProxyPlan::Proxy => Some(self.ensure_proxy().await?),
+            ProxyPlan::Unreachable => return Err(ResolverFailure::unreachable(base_url)),
+            ProxyPlan::Direct => None,
         };
         let url = Url::parse(base_url)
             .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;

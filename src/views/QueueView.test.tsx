@@ -35,6 +35,7 @@ function job(overrides: Partial<DownloadJob> = {}): DownloadJob {
     state: "queued",
     progress: null,
     error: null,
+    failure: null,
     ...overrides,
   };
 }
@@ -186,7 +187,7 @@ describe("queue view", () => {
     );
     render(<QueueView />);
 
-    expect(await screen.findByText("Interrupted")).toBeTruthy();
+    expect(await screen.findByText(/Interrupted · pahe closed/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
 
     await waitFor(() =>
@@ -201,8 +202,76 @@ describe("queue view", () => {
     );
     render(<QueueView />);
 
-    expect(await screen.findByText("Paused")).toBeTruthy();
+    expect(
+      await screen.findByText(/Paused · a Cloudflare check is pending/),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+  });
+
+  it("names each Download failure instead of a bare Failed", async () => {
+    mocked.loadQueue.mockResolvedValue(
+      snapshot({
+        jobs: [
+          job({
+            id: "job-1",
+            episode: 1,
+            state: "failed",
+            failure: "deadSource",
+            error: "Every download Source for this Episode is dead.",
+          }),
+          job({
+            id: "job-2",
+            episode: 2,
+            state: "failed",
+            failure: "expiredCdnUrl",
+            error: "The CDN URL expired and the retry did not help.",
+          }),
+          job({
+            id: "job-3",
+            episode: 3,
+            state: "failed",
+            failure: "insufficientDisk",
+            error: "Not enough room for 1.4 GB.",
+          }),
+          job({
+            id: "job-4",
+            episode: 4,
+            state: "failed",
+            failure: "unreachable",
+            error: "Could not reach https://animepahe.pw.",
+          }),
+          job({
+            id: "job-5",
+            episode: 5,
+            state: "failed",
+            failure: "challengeTimedOut",
+            error: "No human finished the Cloudflare check in time.",
+          }),
+        ],
+      }),
+    );
+    render(<QueueView />);
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("listitem")).toHaveLength(5),
+    );
+
+    const rows = screen.getAllByRole("listitem").map((row) => row.textContent);
+    expect(rows[0]).toContain(
+      "Dead Source · Every download Source for this Episode is dead.",
+    );
+    expect(rows[1]).toContain(
+      "CDN URL expired · The CDN URL expired and the retry did not help.",
+    );
+    expect(rows[2]).toContain(
+      "Not enough disk space · Not enough room for 1.4 GB.",
+    );
+    expect(rows[3]).toContain(
+      "Base URL unreachable · Could not reach https://animepahe.pw.",
+    );
+    expect(rows[4]).toContain(
+      "Cloudflare check timed out · No human finished the Cloudflare check in time.",
+    );
   });
 
   it("retries a failed job through Resume", async () => {

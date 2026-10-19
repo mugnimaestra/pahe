@@ -12,6 +12,7 @@ function job(overrides: Partial<DownloadJob> = {}): DownloadJob {
     state: "queued",
     progress: null,
     error: null,
+    failure: null,
     ...overrides,
   };
 }
