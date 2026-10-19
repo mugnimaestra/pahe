@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::utils::config::BackgroundThrottlingPolicy;
-use tauri::webview::PageLoadEvent;
+use tauri::webview::{Cookie, PageLoadEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time::{Instant, sleep, timeout};
@@ -30,6 +30,10 @@ const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(30);
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(20);
 const RESET_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// How long a Challenge is given to clear itself before the Resolver window is
+/// surfaced to the user, and how often the cookie store is checked meanwhile.
+const SILENT_CHALLENGE_BUDGET: Duration = Duration::from_secs(20);
+const SILENT_CHALLENGE_POLL: Duration = Duration::from_secs(1);
 const MAX_FAILURES: u32 = 6;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -475,8 +479,8 @@ impl Resolver {
             .map_err(|_| ResolverFailure::failed("A download Source has an invalid link."))?;
         self.navigate_ready(window, &href, clock).await?;
 
-        let kwik = self.wait_for_kwik(window, clock).await?;
-        let form = self.wait_for_download_form(window, clock).await?;
+        let kwik = self.wait_for_kwik(window, &href, clock).await?;
+        let form = self.wait_for_download_form(window, &kwik, clock).await?;
         self.submit_download_form(window, base_url, &kwik, &form)
             .await
     }
@@ -486,15 +490,20 @@ impl Resolver {
     async fn wait_for_kwik(
         &self,
         window: &WebviewWindow,
+        url: &Url,
         clock: &mut ChallengeClock,
     ) -> Result<Url, ResolverFailure> {
         let started = Instant::now();
 
         loop {
             let snapshot = self
-                .wait_for(window, "The download Source did not open.", clock, |page| {
-                    page.ready
-                })
+                .wait_for(
+                    window,
+                    url,
+                    "The download Source did not open.",
+                    clock,
+                    |page| page.ready,
+                )
                 .await?;
 
             if is_kwik_file(&snapshot.url) {
@@ -526,13 +535,14 @@ impl Resolver {
     async fn wait_for_download_form(
         &self,
         window: &WebviewWindow,
+        url: &Url,
         clock: &mut ChallengeClock,
     ) -> Result<DownloadForm, ResolverFailure> {
         let started = Instant::now();
 
         loop {
             let _ = self
-                .wait_for(window, "The kwik page did not load.", clock, |page| {
+                .wait_for(window, url, "The kwik page did not load.", clock, |page| {
                     page.ready
                 })
                 .await?;
@@ -617,15 +627,20 @@ impl Resolver {
             ))
         })?;
 
-        self.wait_for(window, "The page did not load.", clock, |page| {
+        self.wait_for(window, url, "The page did not load.", clock, |page| {
             same_page(&page.url, url)
         })
         .await
     }
 
+    /// Waits for `url` to be the page that is loaded and ready.
+    ///
+    /// A Challenge on the way is first given a chance to clear itself without
+    /// the window; only when that budget runs out is the window surfaced.
     async fn wait_for<F>(
         &self,
         window: &WebviewWindow,
+        url: &Url,
         message: &str,
         clock: &mut ChallengeClock,
         mut ready: F,
@@ -635,10 +650,22 @@ impl Resolver {
     {
         let started = Instant::now();
         let mut surfaced = false;
+        let mut silent = false;
 
         loop {
             if let Ok(snapshot) = self.snapshot(window).await {
                 if is_challenge_page(&snapshot) {
+                    if !silent {
+                        silent = true;
+                        clock.pause();
+                        if self.try_silent_challenge(window, url).await {
+                            // Clearance is in the store; load the blocked page
+                            // again instead of showing the window.
+                            clock.resume();
+                            let _ = window.navigate(url.clone());
+                            continue;
+                        }
+                    }
                     if !surfaced {
                         surfaced = true;
                         self.surface_challenge(window);
@@ -667,6 +694,34 @@ impl Resolver {
             }
             sleep(POLL_INTERVAL).await;
         }
+    }
+
+    /// Gives a Challenge a chance to clear itself, with the window left hidden.
+    ///
+    /// The blocked URL is loaded as a document — an XHR alone never surfaces
+    /// Cloudflare's widget — and the Resolver's persistent cookie store is then
+    /// polled for `cf_clearance` for that host. True when clearance arrived in
+    /// time, in which case the caller retries the blocked operation.
+    async fn try_silent_challenge(&self, window: &WebviewWindow, url: &Url) -> bool {
+        let _ = window.navigate(url.clone());
+
+        let host = url.host_str().unwrap_or_default();
+        let deadline = Instant::now() + SILENT_CHALLENGE_BUDGET;
+
+        while Instant::now() < deadline {
+            sleep(SILENT_CHALLENGE_POLL).await;
+            if window
+                .cookies()
+                .is_ok_and(|cookies| has_clearance(&cookies, host))
+            {
+                // The interstitial reloads itself once it clears; let that land
+                // before the caller retries.
+                sleep(SILENT_CHALLENGE_POLL).await;
+                return true;
+            }
+        }
+
+        false
     }
 
     async fn snapshot(&self, window: &WebviewWindow) -> Result<PageSnapshot, String> {
@@ -955,12 +1010,22 @@ impl Resolver {
         accept: &str,
     ) -> Result<FetchResult, ResolverFailure> {
         let mut surfaced = false;
+        let mut silent = false;
         let mut failures = 0;
         let mut challenge_deadline = None;
 
         let outcome = loop {
             match self.fetch_once(window, url, accept).await {
                 Ok(result) if is_challenge(&result) => {
+                    if !silent {
+                        silent = true;
+                        if self.try_silent_challenge(window, url).await {
+                            // Clearance is in the store; fetch the blocked URL
+                            // again instead of showing the window.
+                            continue;
+                        }
+                    }
+
                     if !surfaced {
                         surfaced = true;
                         self.surface_challenge(window);
@@ -1353,6 +1418,13 @@ fn is_challenge(result: &FetchResult) -> bool {
         || (result.content_type.contains("text/html")
             && (result.body.contains("Just a moment")
                 || result.body.contains("challenge-platform")))
+}
+
+/// True when the Resolver's cookie store holds Cloudflare clearance for `host`.
+fn has_clearance(cookies: &[Cookie<'static>], host: &str) -> bool {
+    cookies
+        .iter()
+        .any(|cookie| cookie.name() == "cf_clearance" && domain_matches(cookie.domain(), host))
 }
 
 /// The cookies the Resolver holds for the poster URL, as a Cookie header.
@@ -1767,6 +1839,39 @@ mod tests {
         assert!(!domain_matches(Some("animepahe.pw"), "notanimepahe.pw"));
         assert!(!domain_matches(Some("other.example"), "i.animepahe.pw"));
         assert!(!domain_matches(None, "i.animepahe.pw"));
+    }
+
+    #[test]
+    fn clearance_is_only_a_cloudflare_cookie_for_that_host() {
+        let cookie = |name: &str, domain: &str| {
+            let mut cookie = Cookie::new(name.to_owned(), "token");
+            cookie.set_domain(domain.to_owned());
+            cookie
+        };
+
+        assert!(has_clearance(
+            &[cookie("cf_clearance", "animepahe.pw")],
+            "animepahe.pw"
+        ));
+        assert!(has_clearance(
+            &[
+                cookie("__cf_bm", "animepahe.pw"),
+                cookie("cf_clearance", "animepahe.pw"),
+            ],
+            "animepahe.pw"
+        ));
+        assert!(!has_clearance(
+            &[cookie("cf_clearance", ".kwik.cx")],
+            "animepahe.pw"
+        ));
+        assert!(!has_clearance(
+            &[cookie("__cf_bm", "animepahe.pw")],
+            "animepahe.pw"
+        ));
+        assert!(!has_clearance(
+            &[Cookie::new("cf_clearance", "token")],
+            "animepahe.pw"
+        ));
     }
 
     const RELEASE_PAGE: &str = r#"{
