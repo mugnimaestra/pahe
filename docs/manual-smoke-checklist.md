@@ -64,13 +64,17 @@ second launch.
 - [ ] With the app up, search a common title and open a result. Somewhere on
       this path — search, Anime detail, or the first Download job — Cloudflare
       may present a human check.
-- [ ] Silent first: the check is given up to ~20 seconds to clear itself with
-      the Resolver window left hidden. When it clears — a passive managed check
-      — the search or Download job simply continues and no window ever appears.
-- [ ] When it does not clear in that budget: the **Resolver window** surfaces
-      by itself, the view that is waiting shows *Cloudflare needs a human check.
-      The Resolver window is open — finish the check and … will continue*, and
-      the search or download does **not** fail while the check is pending.
+- [ ] Silent first: the check is given up to ~20 seconds to settle with the
+      Resolver window left hidden. When the blocked request passes while still
+      hidden — a fully passive managed check — the search or Download job
+      simply continues and no window ever appears.
+- [ ] When it does not clear silently — the budget runs out, or clearance
+      arrives but the blocked request is still challenged (on some networks the
+      check only completes in a visible window) — the **Resolver window**
+      surfaces by itself with the check already on screen, the view that is
+      waiting shows *Cloudflare needs a human check. The Resolver window is
+      open — finish the check and … will continue*, and the search or download
+      does **not** fail while the check is pending.
 - [ ] Clear the check in the Resolver window (the widget is a page-level
       challenge: if the homepage shows nothing, navigate inside the window once
       — a document navigation is what triggers it for this egress).
