@@ -78,8 +78,9 @@ second launch.
       jobs wait instead of failing. If you ignore the check long enough, the job
       fails with the Challenge-timeout reason rather than a generic error.
 - [ ] Offline variant: disconnect the network, start a search. The app reports
-      the unreachable reason in plain language (not a generic failure), and
-      recovers when the network returns.
+      *Could not reach https://animepahe.pw. Check your connection or the Base
+      URL.* instead of a generic failure, and recovers when the network
+      returns.
 
 ## 3. Clearance reuse (all platforms)
 
@@ -121,26 +122,36 @@ second launch.
       account and the Library folder is writable — a permission failure must
       read as a plain-language message, not a silent stop.
 - [ ] Disk-space behaviour, if you can produce it (small volume): a Download
-      job that cannot fit fails **before** writing, naming the disk reason.
+      job that cannot fit fails **before** writing, as **Not enough disk space ·
+      this Episode needs X and only Y is free.**
 
 ## 5. Resume (all platforms)
 
 - [ ] Start a Download job and let it reach a visible percentage, then quit the
       app while it runs. A `.part` file stays on disk.
 - [ ] Launch the app again. The job reads **Interrupted · pahe closed while this
-      Download ran…** and the queue does not restart by itself.
-- [ ] Press **Resume** on that job. It continues from the portion already on
-      disk (the byte counter starts near where it stopped, not at zero) and
-      finishes with a correct file that plays to the end.
+      Download ran. Resume restarts it from the beginning.**
+- [ ] Press **Resume** on that job. The engine sends a `Range` request for the
+      bytes the `.part` file already holds, so the counter starts near where it
+      stopped, not at zero, and the finished file plays to the end. The Queue
+      row's copy says the opposite ("Resume restarts it from the beginning") —
+      record what actually happens; if the row is right, that copy and the
+      engine disagree and one of them is a bug.
 - [ ] Pause-by-Challenge path: with a job running, force a Challenge (or start
-      a download when the site is already asking). The job pauses instead of
-      failing; after clearance it continues in place.
-- [ ] Kill the network mid-download. The job fails with the unreachable reason
-      and offers **Retry**; Retry re-resolves and either resumes or starts
-      cleanly, without leaving a corrupt final file.
-- [ ] A truncated CDN URL case, if you can reproduce it (let a download sit
-      until the URL expires): the app re-resolves once and retries before
-      failing as a dead Source.
+      a download when the site is already asking). The job shows
+      **Paused · a Cloudflare check is pending. Finish it in the Resolver
+      window, then Resume.** After clearance, Resume continues the job in
+      place.
+- [ ] Kill the network mid-download. The job fails as **Failed · The download
+      was interrupted: …** and offers **Retry**; Retry re-resolves and either
+      continues from the partial file or starts cleanly, without leaving a
+      corrupt final file. A download that stops short of the promised size
+      reads **Failed · The download stopped after X of Y.** — not a silent
+      success.
+- [ ] An expired CDN URL, if you can reproduce it (let a download sit until the
+      URL expires): the app re-resolves once and continues; if it expires again
+      it reports **CDN URL expired · The CDN link expired again after a fresh
+      resolution…** rather than a generic failure.
 
 ## 6. Playback (all platforms)
 
