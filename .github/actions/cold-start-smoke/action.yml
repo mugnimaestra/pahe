@@ -25,12 +25,20 @@ runs:
       env:
         WEBKIT_DISABLE_COMPOSITING_MODE: "1"
         WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+        # The runner is a VM with no desktop session: WebKitGTK's bubblewrap
+        # sandbox never gets the namespaces it needs there, and its web process
+        # does not come up. A real desktop has both; the smoke only checks the
+        # app, not the sandbox.
+        WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+        WEBKIT_FORCE_SANDBOX: "0"
       run: |
         set -euo pipefail
         binary="$GITHUB_WORKSPACE/${{ inputs.binary }}"
         log="$RUNNER_TEMP/pahe-cold-start.log"
 
-        xvfb-run -a "$binary" >"$log" 2>&1 &
+        # dbus-run-session gives the single-instance plugin and WebKit's
+        # accessories the session bus a desktop would provide.
+        dbus-run-session -- xvfb-run -a "$binary" >"$log" 2>&1 &
         pid=$!
         for _ in $(seq 25); do
           sleep 1
@@ -40,9 +48,23 @@ runs:
             exit 1
           fi
         done
-        if ! pgrep -x pahe >/dev/null; then
-          echo "::error::the launcher survived the cold start, pahe did not"
+        seen=0
+        for _ in $(seq 35); do
+          if find "$HOME" -maxdepth 4 -name library.json -print -quit 2>/dev/null | grep -q .; then
+            seen=1
+            break
+          fi
+          sleep 1
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "::error::pahe exited before it wrote the Library index"
+            cat "$log"
+            exit 1
+          fi
+        done
+        if [ "$seen" != 1 ]; then
+          echo "::error::no Library index a minute after the cold start"
           cat "$log"
+          ps -eo pid,ppid,comm,etime | grep -iE "pahe|webkit|xvfb" || true
           exit 1
         fi
         kill "$pid" 2>/dev/null || true
@@ -106,6 +128,11 @@ runs:
           find "$HOME" -maxdepth 4 \
             \( -name library.json -o -name queue.json -o -name settings.json \) \
             2>/dev/null || true
+          echo "--- sandbox facts ---"
+          command -v dbus-run-session || true
+          command -v bwrap || true
+          cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || true
+          cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true
         }
 
         index=$(find "$HOME" -maxdepth 4 -name library.json 2>/dev/null | head -1)
