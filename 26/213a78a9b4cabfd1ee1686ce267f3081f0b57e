@@ -1,0 +1,14 @@
+docs/manual-smoke-checklist.md
+  h_2d220f5439def3 81-83,125-126,133-139,141-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26213a78a9b4cabfd1ee1686ce267f3081f0b57e",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
