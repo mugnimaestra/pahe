@@ -1,0 +1,18 @@
+.github/actions/cold-start-smoke/action.yml
+  h_2d220f5439def3 28-33,39-41,51-65,67,131-135
+.github/workflows/ci.yml
+  h_2d220f5439def3 25,87
+.github/workflows/release.yml
+  h_2d220f5439def3 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f7db9c6ec61e4ed991cedfa6da8297ecfe30a63a",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
