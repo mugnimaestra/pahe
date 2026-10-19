@@ -1,0 +1,14 @@
+.github/workflows/release.yml
+  h_2d220f5439def3 1-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65e675e0d9f176aafd1dbbc2d4428b78e908d1bc",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
