@@ -675,7 +675,8 @@ impl Resolver {
                     if !silent {
                         silent = true;
                         clock.pause();
-                        if self.try_silent_challenge(window, url).await {
+                        let document = challenge_document(&snapshot.url, url);
+                        if self.try_silent_challenge(window, &document).await {
                             // Clearance is in the store; load the blocked page
                             // again instead of showing the window.
                             clock.resume();
@@ -715,7 +716,7 @@ impl Resolver {
 
     /// Gives a Challenge a chance to clear itself, with the window left hidden.
     ///
-    /// The blocked URL is loaded as a document — an XHR alone never surfaces
+    /// The challenged document is loaded again — an XHR alone never surfaces
     /// Cloudflare's widget — and the Resolver's persistent cookie store is then
     /// polled for `cf_clearance` for that host. True when clearance arrived in
     /// time, in which case the caller retries the blocked operation.
@@ -1261,6 +1262,16 @@ fn is_challenge_page(page: &PageSnapshot) -> bool {
         || text.contains("challenge-platform")
         || text.contains("cf-challenge")
         || text.contains("checking your browser")
+}
+
+/// The document a Challenge was served on. It is not always the page the
+/// caller is waiting for: a Challenge can land on the kwik hop while the wait
+/// is still on the pahe.win link that led there.
+fn challenge_document(page_url: &str, awaited: &Url) -> Url {
+    Url::parse(page_url)
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https"))
+        .unwrap_or_else(|| awaited.clone())
 }
 
 /// Quality-labelled Source links in a stable, deduplicated order.
@@ -2275,5 +2286,18 @@ mod tests {
 
         assert!(is_challenge_page(&challenge));
         assert!(!is_challenge_page(&countdown));
+    }
+
+    #[test]
+    fn a_challenge_is_retried_on_the_document_that_showed_it() {
+        let awaited = Url::parse("https://pahe.win/OcVWM").unwrap();
+
+        assert_eq!(
+            challenge_document("https://kwik.cx/f/abc", &awaited).as_str(),
+            "https://kwik.cx/f/abc",
+            "the kwik hop can be the challenged document"
+        );
+        assert_eq!(challenge_document("", &awaited), awaited);
+        assert_eq!(challenge_document("about:blank", &awaited), awaited);
     }
 }
