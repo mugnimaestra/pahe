@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: bundle (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            bundles: app,dmg
+          - platform: ubuntu-22.04
+            bundles: deb,appimage
+          - platform: windows-latest
+            bundles: nsis
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unsigned bundles
+        uses: tauri-apps/tauri-action@v1
+        with:
+          args: --bundles ${{ matrix.bundles }}
+
+      - name: Cold start smoke
+        uses: ./.github/actions/cold-start-smoke
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v7
+        with:
+          name: pahe-${{ matrix.platform }}
+          path: src-tauri/target/release/bundle
+          if-no-files-found: error
+
+  publish:
+    name: publish (${{ github.ref_name }})
+    needs: bundle
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download bundles
+        uses: actions/download-artifact@v7
+        with:
+          path: bundles
+          merge-multiple: true
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mapfile -t assets < <(find bundles -type f \
+            \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.exe' -o -name '*.msi' \))
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "pahe $GITHUB_REF_NAME" \
+            --notes "Unsigned builds for macOS, Windows, and Linux. Deep verification steps: docs/manual-smoke-checklist.md in the repository." \
+            "${assets[@]}"
