@@ -40,9 +40,16 @@ runs:
             exit 1
           fi
         done
+        if ! pgrep -x pahe >/dev/null; then
+          echo "::error::the launcher survived the cold start, pahe did not"
+          cat "$log"
+          exit 1
+        fi
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
-        pkill -f "$binary" 2>/dev/null || true
+        pkill -x pahe 2>/dev/null || true
+        echo "--- pahe cold start log ---"
+        cat "$log"
 
     - name: Cold start (macOS)
       if: runner.os == 'macOS'
@@ -64,6 +71,8 @@ runs:
         done
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
+        echo "--- pahe cold start log ---"
+        cat "$log"
 
     - name: Cold start (Windows)
       if: runner.os == 'Windows'
@@ -86,30 +95,38 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        index=""
-        for root in "$HOME/.local/share" "$HOME/Library/Application Support"; do
-          if [ -d "$root" ]; then
-            index=$(find "$root" -maxdepth 3 -name library.json 2>/dev/null | head -1)
-          fi
-          if [ -n "$index" ]; then
-            break
-          fi
-        done
+        log="$RUNNER_TEMP/pahe-cold-start.log"
+
+        dump() {
+          echo "--- pahe cold start log ---"
+          cat "$log" 2>/dev/null || true
+          echo "--- environment ---"
+          env | grep -E '^(HOME|XDG_|DBUS_|USER|SHELL)=' || true
+          echo "--- app data files under \$HOME ---"
+          find "$HOME" -maxdepth 4 \
+            \( -name library.json -o -name queue.json -o -name settings.json \) \
+            2>/dev/null || true
+        }
+
+        index=$(find "$HOME" -maxdepth 4 -name library.json 2>/dev/null | head -1)
         if [ -z "$index" ]; then
           echo "::error::cold start wrote no Library index"
+          dump
           exit 1
         fi
         echo "Library index: $index"
-        cat "$index"
-        grep -q "Cold_Start_Smoke" "$index" || {
+        head -20 "$index"
+        if ! grep -q "Cold_Start_Smoke" "$index"; then
           echo "::error::cold start did not adopt the seeded Episode"
+          dump
           exit 1
-        }
+        fi
 
     - name: The cold start adopted the seeded Episode (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
+        $log = Join-Path $env:RUNNER_TEMP "pahe-cold-start.log"
         $index = $null
         foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
           $index = Get-ChildItem -Path $root -Filter library.json -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -117,11 +134,14 @@ runs:
         }
         if (-not $index) {
           Write-Error "cold start wrote no Library index"
+          if (Test-Path $log) { Get-Content $log }
+          Get-ChildItem -Path $env:APPDATA, $env:LOCALAPPDATA -Recurse -Depth 2 -Filter "*.json" -ErrorAction SilentlyContinue | Select-Object -First 20 FullName
           exit 1
         }
         Write-Host "Library index: $($index.FullName)"
         Get-Content $index.FullName
         if (-not (Select-String -Path $index.FullName -Pattern "Cold_Start_Smoke" -Quiet)) {
           Write-Error "cold start did not adopt the seeded Episode"
+          if (Test-Path $log) { Get-Content $log }
           exit 1
         }
