@@ -20,5 +20,10 @@ pnpm test
 cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 ```
 
-CI builds unsigned bundles on macOS, Windows, and Ubuntu for every push.
+CI builds unsigned bundles on macOS, Windows, and Ubuntu for every push, and
+launches each build once against an empty app store (cold start smoke). Pushing
+a `v*` tag runs the release workflow, which builds the same three bundles,
+smoke-tests them, and attaches the unsigned artifacts to a GitHub Release.
+Cross-platform verification that CI cannot do — Challenge, download, resume,
+playback — is the [manual smoke checklist](docs/manual-smoke-checklist.md).
 Conventions live in [CODING_STANDARDS.md](CODING_STANDARDS.md).
