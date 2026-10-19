@@ -1,0 +1,14 @@
+.github/actions/cold-start-smoke/action.yml
+  h_2d220f5439def3 43-47,50-52,74-75,98-111,114,118-119,121,123,129,137-138,145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "72fd2d439f7236ebc7699261caedffaad7737d97",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
