@@ -102,6 +102,9 @@ jobs:
         with:
           args: --bundles ${{ matrix.bundles }}
 
+      - name: Cold start smoke
+        uses: ./.github/actions/cold-start-smoke
+
       - name: Upload bundles
         uses: actions/upload-artifact@v7
         with:

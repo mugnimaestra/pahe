@@ -1,0 +1,127 @@
+name: Cold start smoke
+description: >
+  Launch the built pahe executable against an empty app data store and a seeded
+  Library folder, then check that it settles instead of crashing and adopts the
+  seeded Episode into its index. Runs headless through xvfb on Linux.
+
+inputs:
+  binary:
+    description: The built executable to launch, relative to the repository root.
+    required: false
+    default: src-tauri/target/release/pahe
+
+runs:
+  using: composite
+  steps:
+    - name: Seed the Library folder
+      shell: bash
+      run: |
+        mkdir -p "$HOME/Downloads/animepahe"
+        : > "$HOME/Downloads/animepahe/AnimePahe_Cold_Start_Smoke_-_01_1080p_ADN.mp4"
+
+    - name: Cold start (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+        WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      run: |
+        set -euo pipefail
+        binary="$GITHUB_WORKSPACE/${{ inputs.binary }}"
+        log="$RUNNER_TEMP/pahe-cold-start.log"
+
+        xvfb-run -a "$binary" >"$log" 2>&1 &
+        pid=$!
+        for _ in $(seq 25); do
+          sleep 1
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "::error::pahe exited during cold start"
+            cat "$log"
+            exit 1
+          fi
+        done
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        pkill -f "$binary" 2>/dev/null || true
+
+    - name: Cold start (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        binary="$GITHUB_WORKSPACE/${{ inputs.binary }}"
+        log="$RUNNER_TEMP/pahe-cold-start.log"
+
+        "$binary" >"$log" 2>&1 &
+        pid=$!
+        for _ in $(seq 25); do
+          sleep 1
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "::error::pahe exited during cold start"
+            cat "$log"
+            exit 1
+          fi
+        done
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+
+    - name: Cold start (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $binary = Join-Path $env:GITHUB_WORKSPACE "${{ inputs.binary }}.exe"
+        $log = Join-Path $env:RUNNER_TEMP "pahe-cold-start.log"
+
+        $process = Start-Process -FilePath $binary -PassThru -RedirectStandardOutput $log
+        Start-Sleep -Seconds 25
+        if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+          Write-Error "pahe exited during cold start (log: $log)"
+          if (Test-Path $log) { Get-Content $log }
+          exit 1
+        }
+        Stop-Process -Id $process.Id -Force
+
+    - name: The cold start adopted the seeded Episode
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        index=""
+        for root in "$HOME/.local/share" "$HOME/Library/Application Support"; do
+          if [ -d "$root" ]; then
+            index=$(find "$root" -maxdepth 3 -name library.json 2>/dev/null | head -1)
+          fi
+          if [ -n "$index" ]; then
+            break
+          fi
+        done
+        if [ -z "$index" ]; then
+          echo "::error::cold start wrote no Library index"
+          exit 1
+        fi
+        echo "Library index: $index"
+        cat "$index"
+        grep -q "Cold_Start_Smoke" "$index" || {
+          echo "::error::cold start did not adopt the seeded Episode"
+          exit 1
+        }
+
+    - name: The cold start adopted the seeded Episode (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $index = $null
+        foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
+          $index = Get-ChildItem -Path $root -Filter library.json -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($index) { break }
+        }
+        if (-not $index) {
+          Write-Error "cold start wrote no Library index"
+          exit 1
+        }
+        Write-Host "Library index: $($index.FullName)"
+        Get-Content $index.FullName
+        if (-not (Select-String -Path $index.FullName -Pattern "Cold_Start_Smoke" -Quiet)) {
+          Write-Error "cold start did not adopt the seeded Episode"
+          exit 1
+        }
