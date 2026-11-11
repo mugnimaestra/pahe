@@ -267,4 +267,21 @@ describe("ipc", () => {
 
     expect(handler).toHaveBeenCalledWith({ id: "job-1" });
   });
+
+  it("reads and saves playback positions through their commands", async () => {
+    invoke.mockResolvedValueOnce(754).mockResolvedValueOnce(undefined);
+
+    await expect(ipc.playbackPosition("anime:3")).resolves.toBe(754);
+    await ipc.savePlaybackPosition("anime:3", 800, 1420);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "playback_position", {
+      key: "anime:3",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "save_playback_position", {
+      key: "anime:3",
+      seconds: 800,
+      duration: 1420,
+    });
+  });
+
 });

@@ -11,6 +11,8 @@ vi.mock("../ipc/client", () => ({
     checkLibraryFile: vi.fn(),
     libraryFileUrl: vi.fn(),
     openExternally: vi.fn(),
+    playbackPosition: vi.fn(),
+    savePlaybackPosition: vi.fn(),
   },
 }));
 
@@ -124,6 +126,8 @@ describe("library view", () => {
     mocked.enrichLibrary.mockResolvedValue(LIBRARY);
     mocked.libraryItems.mockResolvedValue(items);
     mocked.checkLibraryFile.mockResolvedValue();
+    mocked.playbackPosition.mockResolvedValue(null);
+    mocked.savePlaybackPosition.mockResolvedValue();
     mocked.libraryFileUrl.mockReturnValue("asset://localhost/one.mp4");
 
     render(<LibraryView />);

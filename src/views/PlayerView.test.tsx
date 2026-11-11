@@ -7,6 +7,8 @@ vi.mock("../ipc/client", () => ({
     checkLibraryFile: vi.fn(),
     libraryFileUrl: vi.fn(),
     openExternally: vi.fn(),
+    playbackPosition: vi.fn(),
+    savePlaybackPosition: vi.fn(),
   },
 }));
 
@@ -27,11 +29,29 @@ const ITEM: LibraryItem = {
 };
 
 function open() {
-  const { container } = render(
+  const { container, unmount } = render(
     <PlayerView item={ITEM} title="Seitokai Yakuindomo" onBack={() => {}} />,
   );
+  openUnmount = unmount;
   return container;
 }
+
+let openUnmount: () => void = () => {};
+
+/** jsdom has no media pipeline; give the element a time and a length. */
+function stubMedia(video: HTMLVideoElement, currentTime: number, duration: number) {
+  Object.defineProperty(video, "currentTime", {
+    value: currentTime,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(video, "duration", {
+    value: duration,
+    configurable: true,
+  });
+}
+
+const KEY = "Seitokai_Yakuindomo:3";
 
 async function findVideo(container: HTMLElement): Promise<HTMLVideoElement> {
   await waitFor(() => expect(container.querySelector("video")).not.toBeNull());
@@ -44,6 +64,8 @@ describe("player view", () => {
     mocked.checkLibraryFile.mockResolvedValue();
     mocked.libraryFileUrl.mockReturnValue("asset://localhost/library%2Fone.mp4");
     mocked.openExternally.mockResolvedValue();
+    mocked.playbackPosition.mockResolvedValue(null);
+    mocked.savePlaybackPosition.mockResolvedValue();
   });
 
   afterEach(() => {
@@ -132,5 +154,57 @@ describe("player view", () => {
     expect((await screen.findByRole("alert")).textContent).toContain(
       "could not open",
     );
+  });
+
+  it("resumes where the Episode stopped and can start over", async () => {
+    mocked.playbackPosition.mockResolvedValue(754);
+    const container = open();
+    const video = await findVideo(container);
+    expect(mocked.playbackPosition).toHaveBeenCalledWith(KEY);
+
+    stubMedia(video, 0, 1420);
+    fireEvent.loadedMetadata(video);
+
+    expect(video.currentTime).toBe(754);
+    expect((await screen.findByText(/Resumed at 12:34/)).textContent).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(video.currentTime).toBe(0);
+    expect(screen.queryByText(/Resumed at/)).toBeNull();
+  });
+
+  it("starts at the beginning when no position is kept", async () => {
+    mocked.playbackPosition.mockRejectedValue("positions lock poisoned");
+    const container = open();
+    const video = await findVideo(container);
+
+    stubMedia(video, 0, 1420);
+    fireEvent.loadedMetadata(video);
+
+    expect(video.currentTime).toBe(0);
+    expect(screen.queryByText(/Resumed at/)).toBeNull();
+  });
+
+  it("keeps the position when playback pauses", async () => {
+    const container = open();
+    const video = await findVideo(container);
+
+    stubMedia(video, 812.4, 1420);
+    fireEvent.pause(video);
+
+    expect(mocked.savePlaybackPosition).toHaveBeenCalledWith(KEY, 812.4, 1420);
+  });
+
+  it("keeps the last position when the player closes", async () => {
+    const container = open();
+    const video = await findVideo(container);
+
+    stubMedia(video, 300, 1420);
+    fireEvent.timeUpdate(video);
+    stubMedia(video, 302, 1420);
+    fireEvent.timeUpdate(video);
+    openUnmount();
+
+    expect(mocked.savePlaybackPosition).toHaveBeenLastCalledWith(KEY, 302, 1420);
   });
 });

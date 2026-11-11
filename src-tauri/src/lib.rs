@@ -1,6 +1,7 @@
 mod download;
 mod library;
 mod player;
+mod positions;
 mod poster;
 mod probe;
 mod proxy;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 
 use download::{Failure as DownloadFailure, FailureReason, Request as DownloadRequest};
 use library::{Library, LibraryAnime, LibraryItem, OwnedEpisode};
+use positions::Positions;
 use probe::ProbeOutcome;
 use queue::{Enqueued, Queue, QueueSnapshot};
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
@@ -229,6 +231,22 @@ fn open_externally(library: tauri::State<'_, Library>, path: String) -> Result<(
     player::open_externally(&library.file(&path)?)
 }
 
+/// Where playback of an Episode stopped, so the player can resume there.
+#[tauri::command]
+fn playback_position(positions: tauri::State<'_, Positions>, key: String) -> Option<f64> {
+    positions.get(&key)
+}
+
+#[tauri::command]
+fn save_playback_position(
+    positions: tauri::State<'_, Positions>,
+    key: String,
+    seconds: f64,
+    duration: Option<f64>,
+) -> Result<(), String> {
+    positions.save(&key, seconds, duration)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -268,6 +286,9 @@ pub fn run() {
             let mut challenge = resolver.challenge_watch();
             app.manage(resolver);
             app.manage(Library::open(app_data_dir.join(library::INDEX_FILE)));
+            app.manage(Positions::open(
+                app_data_dir.join(positions::POSITIONS_FILE),
+            ));
 
             let queue = Arc::new(Queue::open(app_data_dir.join(queue::QUEUE_FILE), {
                 let handle = app.handle().clone();
@@ -370,7 +391,9 @@ pub fn run() {
             owned_episodes,
             library_items,
             check_library_file,
-            open_externally
+            open_externally,
+            playback_position,
+            save_playback_position
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");

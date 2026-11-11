@@ -192,6 +192,16 @@ export const ipc = {
     invoke<void>("open_externally", { path }),
   /** A `src` the webview may load for a Library item's file. */
   libraryFileUrl: (path: string): string => convertFileSrc(path),
+  /** Seconds where playback of an Episode stopped, or null to start at 0. */
+  playbackPosition: (key: string): Promise<number | null> =>
+    invoke<number | null>("playback_position", { key }),
+  /** Keeps where playback stopped; near the start or end it is forgotten. */
+  savePlaybackPosition: (
+    key: string,
+    seconds: number,
+    duration: number | null,
+  ): Promise<void> =>
+    invoke<void>("save_playback_position", { key, seconds, duration }),
   /** The current Download jobs in enqueue order. */
   loadQueue: (): Promise<QueueSnapshot> => invoke<QueueSnapshot>("load_queue"),
   /** Starts the restored queue; restored jobs never run on launch by themselves. */

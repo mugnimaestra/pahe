@@ -8,6 +8,8 @@ vi.mock("../ipc/client", () => ({
     checkLibraryFile: vi.fn(),
     libraryFileUrl: vi.fn(),
     openExternally: vi.fn(),
+    playbackPosition: vi.fn(),
+    savePlaybackPosition: vi.fn(),
   },
 }));
 
@@ -55,6 +57,8 @@ describe("library Anime view", () => {
     vi.resetAllMocks();
     mocked.libraryItems.mockResolvedValue(ITEMS);
     mocked.checkLibraryFile.mockResolvedValue();
+    mocked.playbackPosition.mockResolvedValue(null);
+    mocked.savePlaybackPosition.mockResolvedValue();
     mocked.libraryFileUrl.mockReturnValue("asset://localhost/library%2Ftwo.mp4");
     mocked.openExternally.mockResolvedValue();
   });
