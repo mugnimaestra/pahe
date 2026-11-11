@@ -1,0 +1,19 @@
+src/views/SearchView.tsx
+  s_2f7acfe2d9239f::t_8c1b8b8dcb1e01 12,35-43,47,120,135-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "926147fc9ccd2cccca9f26eec4e395704ad93a8d",
+  "prompts": {},
+  "sessions": {
+    "s_2f7acfe2d9239f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1c3ba-4587-7fd2-8a39-44335b2b9993",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
