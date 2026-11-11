@@ -24,8 +24,9 @@ pub struct ParsedName {
     pub group: String,
 }
 
-/// The Library's identity for an Anime: the animepahe id once enrichment has
-/// found it, otherwise the title slug the filename carries.
+/// The Library's identity for an Anime: animepahe's numeric id once enrichment
+/// has found it, else the session id an older index holds, else the title slug
+/// the filename carries.
 pub fn item_key(anime: &str, episode: f64, quality: &str) -> String {
     format!("{anime}\u{1f}{}\u{1f}{quality}", episode_key(episode))
 }
@@ -35,6 +36,8 @@ pub fn item_key(anime: &str, episode: f64, quality: &str) -> String {
 #[serde(rename_all = "camelCase", default)]
 pub struct LibraryItem {
     pub anime_id: Option<String>,
+    /// animepahe's numeric Anime id, which does not rotate like `anime_id`.
+    pub stable_id: Option<u64>,
     pub title_slug: String,
     pub poster: Option<String>,
     pub episode: f64,
@@ -45,12 +48,16 @@ pub struct LibraryItem {
 }
 
 impl LibraryItem {
-    fn identity(&self) -> &str {
-        self.anime_id.as_deref().unwrap_or(&self.title_slug)
+    fn identity(&self) -> String {
+        match (self.stable_id, &self.anime_id) {
+            (Some(id), _) => format!("#{id}"),
+            (None, Some(session)) => session.clone(),
+            (None, None) => self.title_slug.clone(),
+        }
     }
 
     fn key(&self) -> String {
-        item_key(self.identity(), self.episode, &self.quality)
+        item_key(&self.identity(), self.episode, &self.quality)
     }
 }
 
@@ -58,6 +65,7 @@ impl Default for LibraryItem {
     fn default() -> Self {
         Self {
             anime_id: None,
+            stable_id: None,
             title_slug: String::new(),
             poster: None,
             episode: 0.0,
@@ -74,6 +82,7 @@ impl Default for LibraryItem {
 #[serde(rename_all = "camelCase")]
 pub struct LibraryAnime {
     pub anime_id: Option<String>,
+    pub stable_id: Option<u64>,
     pub title: String,
     pub poster: Option<String>,
     pub episode_count: usize,
@@ -123,11 +132,11 @@ impl Library {
     }
 
     /// Every Episode and Quality the Library owns for an Anime.
-    pub fn owned(&self, anime_id: &str, title: &str) -> Vec<OwnedEpisode> {
+    pub fn owned(&self, stable_id: Option<u64>, anime_id: &str, title: &str) -> Vec<OwnedEpisode> {
         let items = self.items.lock().expect("library lock poisoned");
         let mut owned: Vec<OwnedEpisode> = items
             .iter()
-            .filter(|item| belongs_to(item, anime_id, title))
+            .filter(|item| belongs_to(item, stable_id, anime_id, title))
             .map(|item| OwnedEpisode {
                 episode: item.episode,
                 quality: item.quality.clone(),
@@ -143,19 +152,28 @@ impl Library {
     }
 
     /// Whether the Library already holds this Episode at this Quality.
-    pub fn owns(&self, anime_id: &str, title: &str, episode: u32, quality: &str) -> bool {
-        self.owned(anime_id, title).into_iter().any(|owned| {
-            owned.episode == episode as f64 && owned.quality.eq_ignore_ascii_case(quality)
-        })
+    pub fn owns(
+        &self,
+        stable_id: Option<u64>,
+        anime_id: &str,
+        title: &str,
+        episode: u32,
+        quality: &str,
+    ) -> bool {
+        self.owned(stable_id, anime_id, title)
+            .into_iter()
+            .any(|owned| {
+                owned.episode == episode as f64 && owned.quality.eq_ignore_ascii_case(quality)
+            })
     }
 
     /// Every Library item of an Anime, in Episode then Quality order. The
     /// player needs the items themselves, not just which Episodes are owned.
-    pub fn items(&self, anime_id: &str, title: &str) -> Vec<LibraryItem> {
+    pub fn items(&self, stable_id: Option<u64>, anime_id: &str, title: &str) -> Vec<LibraryItem> {
         let items = self.items.lock().expect("library lock poisoned");
         let mut wanted: Vec<LibraryItem> = items
             .iter()
-            .filter(|item| belongs_to(item, anime_id, title))
+            .filter(|item| belongs_to(item, stable_id, anime_id, title))
             .cloned()
             .collect();
         wanted.sort_by(|left, right| {
@@ -204,9 +222,10 @@ impl Library {
         Ok(groups_of(&items))
     }
 
-    /// Looks up the Anime behind each unenriched title slug and caches its
-    /// identity and poster URL in the index. A failed or empty search leaves
-    /// the item in place for the placeholder to cover.
+    /// Looks up the Anime behind each title slug without a numeric id and
+    /// caches its identity and poster URL in the index. This also migrates an
+    /// item that holds only a session id from an older index. A failed or
+    /// empty search leaves the item in place for the placeholder to cover.
     pub async fn enrich<F, Fut>(&self, search: F) -> Result<Vec<LibraryAnime>, String>
     where
         F: Fn(String) -> Fut,
@@ -218,7 +237,7 @@ impl Library {
             let items = self.items.lock().expect("library lock poisoned");
             items
                 .iter()
-                .filter(|item| item.anime_id.is_none())
+                .filter(|item| item.stable_id.is_none())
                 .map(|item| item.title_slug.clone())
                 .collect::<BTreeSet<_>>()
                 .into_iter()
@@ -238,7 +257,7 @@ impl Library {
         {
             let mut items = self.items.lock().expect("library lock poisoned");
             for item in items.iter_mut() {
-                if item.anime_id.is_some() {
+                if item.stable_id.is_some() {
                     continue;
                 }
                 let Some((_, found)) = matches.iter().find(|(slug, _)| *slug == item.title_slug)
@@ -246,6 +265,7 @@ impl Library {
                     continue;
                 };
                 item.anime_id = Some(found.anime_id.clone());
+                item.stable_id = found.stable_id;
                 item.poster = found.poster.clone();
             }
 
@@ -333,12 +353,18 @@ pub fn humanize(title_slug: &str) -> String {
         .join(" ")
 }
 
-/// A Library item belongs to an Anime when its enriched id matches, or, before
-/// enrichment, when its filename slug matches the Anime's title.
-fn belongs_to(item: &LibraryItem, anime_id: &str, title: &str) -> bool {
-    match item.anime_id.as_deref() {
-        Some(id) => id == anime_id,
-        None => item.title_slug == crate::download::title_slug(title),
+/// A Library item belongs to an Anime when both carry the same numeric id.
+/// An item without one yet (unenriched, or from an older index that held only
+/// a session id, which animepahe rotates) matches by session id or by the
+/// filename slug, until enrichment gives it the numeric id.
+fn belongs_to(item: &LibraryItem, stable_id: Option<u64>, anime_id: &str, title: &str) -> bool {
+    match (item.stable_id, stable_id) {
+        (Some(mine), Some(wanted)) => mine == wanted,
+        (Some(_), None) => item.anime_id.as_deref() == Some(anime_id),
+        (None, _) => {
+            item.anime_id.as_deref() == Some(anime_id)
+                || item.title_slug == crate::download::title_slug(title)
+        }
     }
 }
 
@@ -391,6 +417,7 @@ fn scan(folder: &Path) -> Result<Vec<LibraryItem>, String> {
         .into_iter()
         .map(|(path, parsed)| LibraryItem {
             anime_id: None,
+            stable_id: None,
             title_slug: parsed.title_slug,
             poster: None,
             episode: parsed.episode,
@@ -416,7 +443,7 @@ fn reconcile(scanned: Vec<LibraryItem>, existing: &[LibraryItem]) -> Vec<Library
                 .find(|old| old.path == item.path)
                 .or_else(|| {
                     existing.iter().find(|old| {
-                        old.anime_id.is_some()
+                        (old.anime_id.is_some() || old.stable_id.is_some())
                             && old.title_slug == item.title_slug
                             && on_disk.contains(&old.path)
                     })
@@ -424,6 +451,7 @@ fn reconcile(scanned: Vec<LibraryItem>, existing: &[LibraryItem]) -> Vec<Library
 
             if let Some(previous) = previous {
                 item.anime_id = previous.anime_id.clone();
+                item.stable_id = previous.stable_id;
                 item.poster = previous.poster.clone();
             }
             item
@@ -453,6 +481,7 @@ fn dedupe(items: Vec<LibraryItem>) -> Vec<LibraryItem> {
 fn groups_of(items: &[LibraryItem]) -> Vec<LibraryAnime> {
     struct Group {
         anime_id: Option<String>,
+        stable_id: Option<u64>,
         title: String,
         poster: Option<String>,
         episodes: BTreeSet<String>,
@@ -460,14 +489,13 @@ fn groups_of(items: &[LibraryItem]) -> Vec<LibraryAnime> {
 
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     for item in items {
-        let group = groups
-            .entry(item.identity().to_owned())
-            .or_insert_with(|| Group {
-                anime_id: item.anime_id.clone(),
-                title: humanize(&item.title_slug),
-                poster: None,
-                episodes: BTreeSet::new(),
-            });
+        let group = groups.entry(item.identity()).or_insert_with(|| Group {
+            anime_id: item.anime_id.clone(),
+            stable_id: item.stable_id,
+            title: humanize(&item.title_slug),
+            poster: None,
+            episodes: BTreeSet::new(),
+        });
 
         group.episodes.insert(episode_key(item.episode));
         if item.anime_id.is_some() {
@@ -482,6 +510,7 @@ fn groups_of(items: &[LibraryItem]) -> Vec<LibraryAnime> {
         .into_values()
         .map(|group| LibraryAnime {
             anime_id: group.anime_id,
+            stable_id: group.stable_id,
             title: group.title,
             poster: group.poster,
             episode_count: group.episodes.len(),
@@ -591,6 +620,7 @@ mod tests {
     fn search_result(title: &str, poster: Option<&str>) -> SearchResult {
         SearchResult {
             anime_id: "anime-id".to_owned(),
+            stable_id: Some(1),
             title: title.to_owned(),
             year: Some(2025),
             poster: poster.map(str::to_owned),
@@ -647,6 +677,7 @@ mod tests {
             groups,
             vec![LibraryAnime {
                 anime_id: None,
+                stable_id: None,
                 title: "Seitokai Yakuindomo".to_owned(),
                 poster: None,
                 episode_count: 1,
@@ -670,6 +701,7 @@ mod tests {
             groups,
             vec![LibraryAnime {
                 anime_id: None,
+                stable_id: None,
                 title: "Seitokai ni mo Ana wa Aru".to_owned(),
                 poster: None,
                 episode_count: 3,
@@ -714,7 +746,7 @@ mod tests {
         let library = shelf.library();
         library.refresh(&shelf.folder).unwrap();
 
-        let items = library.items("", "Seitokai ni mo Ana wa Aru");
+        let items = library.items(None, "", "Seitokai ni mo Ana wa Aru");
 
         assert_eq!(
             items
@@ -732,7 +764,7 @@ mod tests {
         shelf.touch(ONE);
         let library = shelf.library();
         library.refresh(&shelf.folder).unwrap();
-        let path = library.items("", "Seitokai ni mo Ana wa Aru")[0]
+        let path = library.items(None, "", "Seitokai ni mo Ana wa Aru")[0]
             .path
             .clone();
 
@@ -759,10 +791,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(library.owns("anime-id", "A localised title", 1, "1080p"));
-        assert!(!library.owns("anime-id", "A localised title", 1, "720p"));
-        assert!(!library.owns("anime-id", "A localised title", 2, "1080p"));
-        assert!(!library.owns("another-anime", "A localised title", 1, "1080p"));
+        assert!(library.owns(None, "anime-id", "A localised title", 1, "1080p"));
+        assert!(!library.owns(None, "anime-id", "A localised title", 1, "720p"));
+        assert!(!library.owns(None, "anime-id", "A localised title", 2, "1080p"));
+        assert!(!library.owns(None, "another-anime", "A localised title", 1, "1080p"));
     }
 
     #[test]
@@ -772,8 +804,8 @@ mod tests {
         let library = shelf.library();
         library.refresh(&shelf.folder).unwrap();
 
-        assert!(library.owns("anime-id", "Seitokai ni mo Ana wa Aru", 1, "1080P"));
-        assert!(!library.owns("anime-id", "Another Anime", 1, "1080p"));
+        assert!(library.owns(None, "anime-id", "Seitokai ni mo Ana wa Aru", 1, "1080P"));
+        assert!(!library.owns(None, "anime-id", "Another Anime", 1, "1080p"));
     }
 
     #[test]
@@ -786,7 +818,7 @@ mod tests {
         library.refresh(&shelf.folder).unwrap();
 
         assert_eq!(
-            library.owned("anime-id", "Seitokai ni mo Ana wa Aru"),
+            library.owned(None, "anime-id", "Seitokai ni mo Ana wa Aru"),
             vec![
                 OwnedEpisode {
                     episode: 1.0,
@@ -895,6 +927,7 @@ mod tests {
             groups[0],
             LibraryAnime {
                 anime_id: Some("anime-id".to_owned()),
+                stable_id: Some(1),
                 title: "Seitokai ni mo Ana wa Aru".to_owned(),
                 poster: Some("https://i.animepahe.pw/posters/one.jpg".to_owned()),
                 episode_count: 3,
@@ -995,7 +1028,9 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].anime_id, None);
         assert_eq!(
-            library.owned("new-id", "Seitokai ni mo Ana wa Aru").len(),
+            library
+                .owned(None, "new-id", "Seitokai ni mo Ana wa Aru")
+                .len(),
             1
         );
     }
@@ -1039,5 +1074,77 @@ mod tests {
 
         assert_eq!(groups[0].anime_id, None);
         assert_eq!(groups[0].poster, None);
+    }
+
+    #[tokio::test]
+    async fn an_index_with_only_a_rotated_session_id_migrates_to_the_numeric_id() {
+        let shelf = Shelf::new();
+        shelf.touch(ONE);
+        let path = shelf.folder.join(ONE).display().to_string();
+        fs::create_dir_all(shelf.index.parent().unwrap()).unwrap();
+        let old = format!(
+            r#"{{"items":[{{"animeId":"old-session","titleSlug":"Seitokai_ni_mo_Ana_wa_Aru","episode":1,"version":2,"quality":"1080p","group":"ADN","path":{path:?}}}]}}"#
+        );
+        fs::write(&shelf.index, old).unwrap();
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+
+        // Before enrichment the rotated session id still owns by slug.
+        assert_eq!(
+            library
+                .owned(Some(6556), "new-session", "Seitokai ni mo Ana wa Aru")
+                .len(),
+            1
+        );
+
+        library
+            .enrich(|_| async {
+                Ok(vec![SearchResult {
+                    anime_id: "new-session".to_owned(),
+                    stable_id: Some(6556),
+                    title: "Seitokai ni mo Ana wa Aru".to_owned(),
+                    year: None,
+                    poster: None,
+                }])
+            })
+            .await
+            .unwrap();
+
+        let item = &shelf.stored().items[0];
+        assert_eq!(item.stable_id, Some(6556));
+        assert_eq!(item.anime_id.as_deref(), Some("new-session"));
+        assert_eq!(
+            library
+                .owned(Some(6556), "a-later-session", "Seitokai ni mo Ana wa Aru")
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_numeric_id_keeps_another_anime_with_the_same_slug_apart() {
+        let shelf = Shelf::new();
+        shelf.touch(ONE);
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+        library
+            .enrich(|_| async { Ok(vec![search_result("Seitokai ni mo Ana wa Aru", None)]) })
+            .await
+            .unwrap();
+
+        assert!(library.owns(
+            Some(1),
+            "any-session",
+            "Seitokai ni mo Ana wa Aru!",
+            1,
+            "1080p"
+        ));
+        assert!(!library.owns(
+            Some(2),
+            "other-session",
+            "Seitokai ni mo Ana wa Aru*",
+            1,
+            "1080p"
+        ));
     }
 }

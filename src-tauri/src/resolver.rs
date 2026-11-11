@@ -40,6 +40,9 @@ const MAX_FAILURES: u32 = 6;
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub anime_id: String,
+    /// animepahe's numeric Anime id. Unlike the session in `anime_id`, it
+    /// does not rotate, so the Library and playback positions key on it.
+    pub stable_id: Option<u64>,
     pub title: String,
     pub year: Option<u16>,
     pub poster: Option<String>,
@@ -1523,6 +1526,7 @@ pub fn parse_search(body: &str, base_url: &str) -> Result<Vec<SearchResult>, Res
                 .and_then(Value::as_str)
                 .map(str::to_owned)
                 .or_else(|| item.get("id").and_then(as_text))?;
+            let stable_id = item.get("id").and_then(Value::as_u64);
             let year = item
                 .get("year")
                 .and_then(Value::as_u64)
@@ -1534,6 +1538,7 @@ pub fn parse_search(body: &str, base_url: &str) -> Result<Vec<SearchResult>, Res
 
             Some(SearchResult {
                 anime_id,
+                stable_id,
                 title: title.to_owned(),
                 year,
                 poster,
@@ -1781,12 +1786,14 @@ mod tests {
             results[0],
             SearchResult {
                 anime_id: "0b9c9a2e-6d1f-4b3c-9c4e-1a2b3c4d5e6f".to_owned(),
+                stable_id: Some(6556),
                 title: "Seitokai ni mo Ana wa Aru!".to_owned(),
                 year: Some(2025),
                 poster: Some("https://i.animepahe.si/posters/example.jpg".to_owned()),
             }
         );
         assert_eq!(results[1].anime_id, "12");
+        assert_eq!(results[1].stable_id, Some(12));
         assert_eq!(
             results[1].poster.as_deref(),
             Some("https://animepahe.pw/posters/relative.jpg")

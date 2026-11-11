@@ -24,6 +24,7 @@ const mocked = vi.mocked(ipc);
 const LIBRARY: LibraryAnime[] = [
   {
     animeId: "anime-id",
+    stableId: 1,
     title: "Seitokai ni mo Ana wa Aru!",
     poster: "https://i.animepahe.pw/posters/one.jpg",
     episodeCount: 3,
@@ -113,6 +114,7 @@ describe("library view", () => {
     const items: LibraryItem[] = [
       {
         animeId: "anime-id",
+        stableId: 1,
         titleSlug: "Seitokai_ni_mo_Ana_wa_Aru",
         poster: null,
         episode: 1,
@@ -139,6 +141,7 @@ describe("library view", () => {
     expect(await screen.findByText("Episode 1")).toBeTruthy();
     expect(mocked.libraryItems).toHaveBeenCalledWith(
       "anime-id",
+      1,
       "Seitokai ni mo Ana wa Aru!",
     );
 

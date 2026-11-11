@@ -80,6 +80,10 @@ impl Failure {
 #[serde(rename_all = "camelCase")]
 pub struct Request {
     pub anime_id: String,
+    /// animepahe's numeric Anime id, for the Library check. Jobs saved before
+    /// it existed load without it.
+    #[serde(default)]
+    pub stable_id: Option<u64>,
     pub title: String,
     pub episode: u32,
     pub session: String,
@@ -689,6 +693,7 @@ mod tests {
     fn request() -> Request {
         Request {
             anime_id: "anime-id".to_owned(),
+            stable_id: None,
             title: "Even the Student Council Has Its Holes!".to_owned(),
             episode: 4,
             session: "play-session".to_owned(),

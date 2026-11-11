@@ -22,6 +22,8 @@ export type ProbeOutcome = "clean" | "poisoned" | "unreachable";
 
 export interface SearchResult {
   animeId: string;
+  /** animepahe's numeric Anime id; unlike the session id it does not rotate. */
+  stableId: number | null;
   title: string;
   year: number | null;
   poster: string | null;
@@ -51,6 +53,8 @@ export interface AnimeDetail {
 
 export interface LibraryAnime {
   animeId: string | null;
+  /** animepahe's numeric Anime id; unlike the session id it does not rotate. */
+  stableId: number | null;
   title: string;
   poster: string | null;
   episodeCount: number;
@@ -102,6 +106,7 @@ export type FailureReason =
 
 export interface DownloadRequest {
   animeId: string;
+  stableId: number | null;
   title: string;
   episode: number;
   session: string;
@@ -140,6 +145,8 @@ export interface StreamSource {
 /** A downloaded Episode file the Library knows about. */
 export interface LibraryItem {
   animeId: string | null;
+  /** animepahe's numeric Anime id; unlike the session id it does not rotate. */
+  stableId: number | null;
   titleSlug: string;
   poster: string | null;
   episode: number;
@@ -181,17 +188,22 @@ export const ipc = {
   enrichLibrary: (): Promise<LibraryAnime[]> =>
     invoke<LibraryAnime[]>("enrich_library"),
   /** Every Episode and Quality the Library already holds for an Anime. */
-  ownedEpisodes: (animeId: string, title: string): Promise<OwnedEpisode[]> =>
-    invoke<OwnedEpisode[]>("owned_episodes", { animeId, title }),
+  ownedEpisodes: (
+    animeId: string,
+    stableId: number | null,
+    title: string,
+  ): Promise<OwnedEpisode[]> =>
+    invoke<OwnedEpisode[]>("owned_episodes", { animeId, stableId, title }),
   /** Queues Download jobs, skipping Episodes the Library or an active job owns. */
   enqueueDownloads: (requests: DownloadRequest[]): Promise<Enqueued> =>
     invoke<Enqueued>("enqueue_downloads", { requests }),
   /** Every Library item of an Anime, in Episode then Quality order. */
   libraryItems: (
     animeId: string | null,
+    stableId: number | null,
     title: string,
   ): Promise<LibraryItem[]> =>
-    invoke<LibraryItem[]>("library_items", { animeId, title }),
+    invoke<LibraryItem[]>("library_items", { animeId, stableId, title }),
   /** Rejects with a plain-language message when the item's file is gone. */
   checkLibraryFile: (path: string): Promise<void> =>
     invoke<void>("check_library_file", { path }),
@@ -207,16 +219,19 @@ export const ipc = {
     quality: string,
   ): Promise<StreamSource> =>
     invoke<StreamSource>("stream_episode", { animeId, session, quality }),
-  /** Seconds where playback of an Episode stopped, or null to start at 0. */
-  playbackPosition: (key: string): Promise<number | null> =>
-    invoke<number | null>("playback_position", { key }),
+  /**
+   * Seconds where playback of an Episode stopped, or null to start at 0.
+   * `keys` lists the current key first, then older keys to migrate from.
+   */
+  playbackPosition: (keys: string[]): Promise<number | null> =>
+    invoke<number | null>("playback_position", { keys }),
   /** Keeps where playback stopped; near the start or end it is forgotten. */
   savePlaybackPosition: (
-    key: string,
+    keys: string[],
     seconds: number,
     duration: number | null,
   ): Promise<void> =>
-    invoke<void>("save_playback_position", { key, seconds, duration }),
+    invoke<void>("save_playback_position", { keys, seconds, duration }),
   /** The current Download jobs in enqueue order. */
   loadQueue: (): Promise<QueueSnapshot> => invoke<QueueSnapshot>("load_queue"),
   /** Starts the restored queue; restored jobs never run on launch by themselves. */

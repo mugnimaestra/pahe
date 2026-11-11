@@ -158,6 +158,7 @@ async fn enqueue_downloads(
 
     Ok(queue.enqueue(requests, |request| {
         library.owns(
+            request.stable_id,
             &request.anime_id,
             &request.title,
             request.episode,
@@ -206,9 +207,10 @@ fn resume_download(
 fn owned_episodes(
     library: tauri::State<'_, Library>,
     anime_id: String,
+    stable_id: Option<u64>,
     title: String,
 ) -> Vec<OwnedEpisode> {
-    library.owned(&anime_id, &title)
+    library.owned(stable_id, &anime_id, &title)
 }
 
 /// Every Library item of an Anime, for the Library's Episode list.
@@ -216,9 +218,10 @@ fn owned_episodes(
 fn library_items(
     library: tauri::State<'_, Library>,
     anime_id: Option<String>,
+    stable_id: Option<u64>,
     title: String,
 ) -> Vec<LibraryItem> {
-    library.items(anime_id.as_deref().unwrap_or_default(), &title)
+    library.items(stable_id, anime_id.as_deref().unwrap_or_default(), &title)
 }
 
 /// Rejects with a plain-language message when a Library item's file is gone.
@@ -235,8 +238,9 @@ fn open_externally(library: tauri::State<'_, Library>, path: String) -> Result<(
 
 /// Where playback of an Episode stopped, so the player can resume there.
 #[tauri::command]
-fn playback_position(positions: tauri::State<'_, Positions>, key: String) -> Option<f64> {
-    positions.get(&key)
+/// `keys` lists the current key first, then older keys to migrate from.
+fn playback_position(positions: tauri::State<'_, Positions>, keys: Vec<String>) -> Option<f64> {
+    keys.iter().find_map(|key| positions.get(key))
 }
 
 /// An Episode the player can load before it is downloaded.
@@ -279,11 +283,14 @@ async fn stream_episode(
 #[tauri::command]
 fn save_playback_position(
     positions: tauri::State<'_, Positions>,
-    key: String,
+    keys: Vec<String>,
     seconds: f64,
     duration: Option<f64>,
 ) -> Result<(), String> {
-    positions.save(&key, seconds, duration)
+    let (key, older) = keys
+        .split_first()
+        .ok_or_else(|| "A playback position needs an Episode.".to_owned())?;
+    positions.save(key, older, seconds, duration)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

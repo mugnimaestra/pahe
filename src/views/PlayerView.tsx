@@ -17,6 +17,7 @@ export type Playback =
   | {
       kind: "stream";
       animeId: string;
+      stableId: number | null;
       episode: number;
       session: string;
       quality: string;
@@ -53,9 +54,17 @@ export default function PlayerView({
   );
   const library = playback.kind === "library" ? playback.item : null;
   const episode = library?.episode ?? (playback.kind === "stream" ? playback.episode : 0);
-  // A stream and a download of the same Episode share one position. The key
-  // is the title slug, not the Anime id, because animepahe rotates its ids.
-  const positionKey = `${library?.titleSlug ?? titleSlug(title)}:${episode}`;
+  // A stream and a download of the same Episode share one position, keyed
+  // on animepahe's numeric id. The session id rotates, so it is only an older
+  // key to migrate from, like the title slug used before the numeric id.
+  const stableId = library?.stableId ?? (playback.kind === "stream" ? playback.stableId : null);
+  const sessionId = library?.animeId ?? (playback.kind === "stream" ? playback.animeId : null);
+  const positionKeys = [
+    ...(stableId !== null ? [`#${stableId}:${episode}`] : []),
+    `${library?.titleSlug ?? titleSlug(title)}:${episode}`,
+    ...(sessionId !== null ? [`${sessionId}:${episode}`] : []),
+  ];
+  const positionKey = positionKeys.join("|");
   const sourceKey =
     playback.kind === "library"
       ? playback.item.path
@@ -89,7 +98,7 @@ export default function PlayerView({
     Promise.all([
       open,
       // A lost position only means the Episode starts at the beginning.
-      ipc.playbackPosition(positionKey).catch(() => null),
+      ipc.playbackPosition(positionKeys).catch(() => null),
     ])
       .then(([url, position]) => {
         if (!active) return;
@@ -108,7 +117,7 @@ export default function PlayerView({
       const last = watched.current;
       if (last !== null) {
         ipc
-          .savePlaybackPosition(positionKey, last.seconds, last.duration)
+          .savePlaybackPosition(positionKeys, last.seconds, last.duration)
           .catch(() => {});
       }
     };
@@ -123,7 +132,7 @@ export default function PlayerView({
 
     lastSave.current = Date.now();
     ipc
-      .savePlaybackPosition(positionKey, video.currentTime, duration)
+      .savePlaybackPosition(positionKeys, video.currentTime, duration)
       .catch(() => {
         // The position is a convenience; playback goes on without it.
       });

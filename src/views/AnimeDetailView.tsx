@@ -84,7 +84,7 @@ export default function AnimeDetailView({
     let active = true;
 
     ipc
-      .ownedEpisodes(result.animeId, result.title)
+      .ownedEpisodes(result.animeId, result.stableId, result.title)
       .then((episodes) => {
         if (active) setOwned(episodes);
       })
@@ -95,7 +95,7 @@ export default function AnimeDetailView({
     return () => {
       active = false;
     };
-  }, [result.animeId, result.title]);
+  }, [result.animeId, result.stableId, result.title]);
 
   useEffect(() => {
     let active = true;
@@ -111,7 +111,7 @@ export default function AnimeDetailView({
           current.filter((number) => number !== job.episode),
         );
         ipc
-          .ownedEpisodes(result.animeId, result.title)
+          .ownedEpisodes(result.animeId, result.stableId, result.title)
           .then((episodes) => {
             if (active) setOwned(episodes);
           })
@@ -131,7 +131,7 @@ export default function AnimeDetailView({
       active = false;
       stop?.();
     };
-  }, [result.animeId, result.title]);
+  }, [result.animeId, result.stableId, result.title]);
 
   function qualityOf(episode: number): string {
     return qualities[episode] ?? defaultQuality;
@@ -166,6 +166,7 @@ export default function AnimeDetailView({
       const outcome = await ipc.enqueueDownloads(
         episodes.map((episode) => ({
           animeId: result.animeId,
+          stableId: result.stableId,
           title: result.title,
           episode: episode.number,
           session: episode.session,
@@ -314,6 +315,7 @@ export default function AnimeDetailView({
                         setStreaming({
                           kind: "stream",
                           animeId: result.animeId,
+                          stableId: result.stableId,
                           episode: episode.number,
                           session: episode.session,
                           quality,

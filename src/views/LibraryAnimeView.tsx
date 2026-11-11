@@ -29,7 +29,7 @@ export default function LibraryAnimeView({
     setState({ kind: "loading" });
 
     ipc
-      .libraryItems(anime.animeId, anime.title)
+      .libraryItems(anime.animeId, anime.stableId, anime.title)
       .then((items) => {
         if (active) setState({ kind: "ready", items });
       })
@@ -40,7 +40,7 @@ export default function LibraryAnimeView({
     return () => {
       active = false;
     };
-  }, [anime.animeId, anime.title]);
+  }, [anime.animeId, anime.stableId, anime.title]);
 
   if (playing !== null) {
     return (

@@ -24,6 +24,7 @@ const mocked = vi.mocked(ipc);
 
 const ANIME: LibraryAnime = {
   animeId: null,
+  stableId: null,
   title: "Seitokai Yakuindomo",
   poster: null,
   episodeCount: 2,
@@ -32,6 +33,7 @@ const ANIME: LibraryAnime = {
 const ITEMS: LibraryItem[] = [
   {
     animeId: null,
+    stableId: null,
     titleSlug: "Seitokai_Yakuindomo",
     poster: null,
     episode: 1,
@@ -42,6 +44,7 @@ const ITEMS: LibraryItem[] = [
   },
   {
     animeId: null,
+    stableId: null,
     titleSlug: "Seitokai_Yakuindomo",
     poster: null,
     episode: 2,
@@ -71,6 +74,7 @@ describe("library Anime view", () => {
     expect(screen.getByText("1080p · B-Bass")).toBeTruthy();
     expect(screen.getByText("720p · B-Bass")).toBeTruthy();
     expect(mocked.libraryItems).toHaveBeenCalledWith(
+      null,
       null,
       "Seitokai Yakuindomo",
     );

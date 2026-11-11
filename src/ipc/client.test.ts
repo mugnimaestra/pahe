@@ -134,6 +134,7 @@ describe("ipc", () => {
     const requests = [
       {
         animeId: "anime-id",
+        stableId: 68,
         title: "Fairy Tail",
         episode: 4,
         session: "session-four",
@@ -190,11 +191,12 @@ describe("ipc", () => {
     const owned = [{ episode: 1, quality: "1080p" }];
     invoke.mockResolvedValue(owned);
 
-    await expect(ipc.ownedEpisodes("anime-id", "Fairy Tail")).resolves.toEqual(
+    await expect(ipc.ownedEpisodes("anime-id", 68, "Fairy Tail")).resolves.toEqual(
       owned,
     );
     expect(invoke).toHaveBeenCalledWith("owned_episodes", {
       animeId: "anime-id",
+      stableId: 68,
       title: "Fairy Tail",
     });
   });
@@ -203,6 +205,7 @@ describe("ipc", () => {
     const items = [
       {
         animeId: null,
+        stableId: null,
         titleSlug: "Seitokai_Yakuindomo",
         poster: null,
         episode: 1,
@@ -215,10 +218,11 @@ describe("ipc", () => {
     invoke.mockResolvedValue(items);
 
     await expect(
-      ipc.libraryItems(null, "Seitokai Yakuindomo"),
+      ipc.libraryItems(null, null, "Seitokai Yakuindomo"),
     ).resolves.toEqual(items);
     expect(invoke).toHaveBeenCalledWith("library_items", {
       animeId: null,
+      stableId: null,
       title: "Seitokai Yakuindomo",
     });
   });
@@ -271,14 +275,14 @@ describe("ipc", () => {
   it("reads and saves playback positions through their commands", async () => {
     invoke.mockResolvedValueOnce(754).mockResolvedValueOnce(undefined);
 
-    await expect(ipc.playbackPosition("anime:3")).resolves.toBe(754);
-    await ipc.savePlaybackPosition("anime:3", 800, 1420);
+    await expect(ipc.playbackPosition(["#68:3", "anime:3"])).resolves.toBe(754);
+    await ipc.savePlaybackPosition(["#68:3", "anime:3"], 800, 1420);
 
     expect(invoke).toHaveBeenNthCalledWith(1, "playback_position", {
-      key: "anime:3",
+      keys: ["#68:3", "anime:3"],
     });
     expect(invoke).toHaveBeenNthCalledWith(2, "save_playback_position", {
-      key: "anime:3",
+      keys: ["#68:3", "anime:3"],
       seconds: 800,
       duration: 1420,
     });

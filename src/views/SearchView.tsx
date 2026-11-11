@@ -35,7 +35,7 @@ export default function SearchView() {
       // A failed Library lookup only hides the badge; the results still show.
       const inLibrary = await Promise.all(
         results.map((result) =>
-          ipc.ownedEpisodes(result.animeId, result.title).then(
+          ipc.ownedEpisodes(result.animeId, result.stableId, result.title).then(
             (owned) => owned.length > 0,
             () => false,
           ),

@@ -22,6 +22,7 @@ const mocked = vi.mocked(ipc);
 
 const RESULT: SearchResult = {
   animeId: "0b9c9a2e-6d1f-4b3c-9c4e-1a2b3c4d5e6f",
+  stableId: 6556,
   title: "Seitokai ni mo Ana wa Aru!",
   year: 2025,
   poster: "https://i.animepahe.si/posters/example.jpg",
@@ -100,6 +101,7 @@ describe("search view", () => {
     expect(notOwned.textContent).not.toContain("In Library");
     expect(mocked.ownedEpisodes).toHaveBeenCalledWith(
       RESULT.animeId,
+      6556,
       RESULT.title,
     );
   });

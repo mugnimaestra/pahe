@@ -31,6 +31,7 @@ const mocked = vi.mocked(ipc);
 
 const RESULT: SearchResult = {
   animeId: "7da6a559-70e7-5ce1-4f29-3732c1fea142",
+  stableId: 68,
   title: "Fairy Tail",
   year: 2009,
   poster: "https://i.animepahe.pw/posters/fairy-tail.webp",
@@ -242,6 +243,7 @@ describe("anime detail view", () => {
       expect(mocked.enqueueDownloads).toHaveBeenCalledWith([
         {
           animeId: RESULT.animeId,
+          stableId: 68,
           title: RESULT.title,
           episode: 1,
           session: "session-one",

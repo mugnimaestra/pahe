@@ -20,6 +20,7 @@ const mocked = vi.mocked(ipc);
 
 const ITEM: LibraryItem = {
   animeId: null,
+  stableId: null,
   titleSlug: "Seitokai_Yakuindomo",
   poster: null,
   episode: 3,
@@ -52,7 +53,7 @@ function stubMedia(video: HTMLVideoElement, currentTime: number, duration: numbe
   });
 }
 
-const KEY = "Seitokai_Yakuindomo:3";
+const KEY = ["Seitokai_Yakuindomo:3"];
 
 async function findVideo(container: HTMLElement): Promise<HTMLVideoElement> {
   await waitFor(() => expect(container.querySelector("video")).not.toBeNull());
@@ -174,6 +175,20 @@ describe("player view", () => {
     expect(screen.queryByText(/Resumed at/)).toBeNull();
   });
 
+  it("keys an enriched item on the numeric id and migrates older keys", async () => {
+    const item = { ...ITEM, animeId: "old-session", stableId: 68 };
+    const { container } = render(
+      <PlayerView playback={{ kind: "library", item }} title="Seitokai Yakuindomo" onBack={() => {}} />,
+    );
+    await findVideo(container);
+
+    expect(mocked.playbackPosition).toHaveBeenCalledWith([
+      "#68:3",
+      "Seitokai_Yakuindomo:3",
+      "old-session:3",
+    ]);
+  });
+
   it("starts at the beginning when no position is kept", async () => {
     mocked.playbackPosition.mockRejectedValue("positions lock poisoned");
     const container = open();
@@ -213,6 +228,7 @@ describe("player view", () => {
     const STREAM = {
       kind: "stream" as const,
       animeId: "anime-id",
+      stableId: 42,
       episode: 5,
       session: "session-five",
       quality: "1080p",
@@ -243,7 +259,11 @@ describe("player view", () => {
         "session-five",
         "1080p",
       );
-      expect(mocked.playbackPosition).toHaveBeenCalledWith("Fairy_Tail:5");
+      expect(mocked.playbackPosition).toHaveBeenCalledWith([
+        "#42:5",
+        "Fairy_Tail:5",
+        "anime-id:5",
+      ]);
       expect(screen.queryByRole("button", { name: "Open externally" })).toBeNull();
       expect(mocked.checkLibraryFile).not.toHaveBeenCalled();
     });

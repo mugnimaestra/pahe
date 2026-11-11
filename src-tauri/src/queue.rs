@@ -407,6 +407,7 @@ mod tests {
     fn request(episode: u32, quality: &str) -> Request {
         Request {
             anime_id: "anime-id".to_owned(),
+            stable_id: None,
             title: "Seitokai Yakuindomo".to_owned(),
             episode,
             session: format!("session-{episode}"),

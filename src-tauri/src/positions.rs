@@ -50,9 +50,17 @@ impl Positions {
             .copied()
     }
 
-    /// Keeps `seconds` for `key`. A stop near the start or the end forgets
-    /// the key, so a watched Episode opens from the start next time.
-    pub fn save(&self, key: &str, seconds: f64, duration: Option<f64>) -> Result<(), String> {
+    /// Keeps `seconds` for `key` and drops the `older` keys the same Episode
+    /// had before, so a migrated position cannot come back. A stop near the
+    /// start or the end forgets the key, so a watched Episode opens from the
+    /// start next time.
+    pub fn save(
+        &self,
+        key: &str,
+        older: &[String],
+        seconds: f64,
+        duration: Option<f64>,
+    ) -> Result<(), String> {
         if key.trim().is_empty() {
             return Err("A playback position needs an Episode.".to_owned());
         }
@@ -63,7 +71,11 @@ impl Positions {
         let keep = seconds.is_finite() && seconds >= MIN_SECONDS && !watched;
 
         let mut current = self.current.lock().expect("positions lock poisoned");
-        let changed = if keep {
+        let mut changed = false;
+        for old in older.iter().filter(|old| old.as_str() != key) {
+            changed |= current.remove(old).is_some();
+        }
+        changed |= if keep {
             let seconds = seconds.floor();
             current.insert(key.to_owned(), seconds) != Some(seconds)
         } else {
@@ -103,7 +115,7 @@ mod tests {
     fn a_saved_position_survives_a_restart() {
         let dir = TempDir::new().unwrap();
         positions(&dir)
-            .save("anime:3", 754.6, Some(1420.0))
+            .save("anime:3", &[], 754.6, Some(1420.0))
             .unwrap();
 
         assert_eq!(positions(&dir).get("anime:3"), Some(754.0));
@@ -114,9 +126,9 @@ mod tests {
     fn a_stop_near_the_end_forgets_the_episode() {
         let dir = TempDir::new().unwrap();
         let store = positions(&dir);
-        store.save("anime:3", 600.0, Some(1420.0)).unwrap();
+        store.save("anime:3", &[], 600.0, Some(1420.0)).unwrap();
 
-        store.save("anime:3", 1400.0, Some(1420.0)).unwrap();
+        store.save("anime:3", &[], 1400.0, Some(1420.0)).unwrap();
 
         assert_eq!(store.get("anime:3"), None);
         assert_eq!(positions(&dir).get("anime:3"), None);
@@ -126,9 +138,9 @@ mod tests {
     fn a_stop_near_the_start_forgets_the_episode() {
         let dir = TempDir::new().unwrap();
         let store = positions(&dir);
-        store.save("anime:3", 600.0, None).unwrap();
+        store.save("anime:3", &[], 600.0, None).unwrap();
 
-        store.save("anime:3", 4.0, None).unwrap();
+        store.save("anime:3", &[], 4.0, None).unwrap();
 
         assert_eq!(store.get("anime:3"), None);
     }
@@ -138,8 +150,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = positions(&dir);
 
-        store.save("anime:3", 600.0, None).unwrap();
-        store.save("anime:4", 600.0, Some(f64::INFINITY)).unwrap();
+        store.save("anime:3", &[], 600.0, None).unwrap();
+        store
+            .save("anime:4", &[], 600.0, Some(f64::INFINITY))
+            .unwrap();
 
         assert_eq!(store.get("anime:3"), Some(600.0));
         assert_eq!(store.get("anime:4"), Some(600.0));
@@ -157,6 +171,20 @@ mod tests {
     fn an_empty_key_is_refused() {
         let dir = TempDir::new().unwrap();
 
-        assert!(positions(&dir).save(" ", 600.0, None).is_err());
+        assert!(positions(&dir).save(" ", &[], 600.0, None).is_err());
+    }
+
+    #[test]
+    fn saving_under_the_current_key_drops_the_older_keys() {
+        let dir = TempDir::new().unwrap();
+        let store = positions(&dir);
+        store.save("old-session:3", &[], 600.0, None).unwrap();
+
+        store
+            .save("#68:3", &["old-session:3".to_owned()], 700.0, None)
+            .unwrap();
+
+        assert_eq!(positions(&dir).get("#68:3"), Some(700.0));
+        assert_eq!(positions(&dir).get("old-session:3"), None);
     }
 }
