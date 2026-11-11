@@ -1,0 +1,20 @@
+package.json
+  h_2d220f5439def3 4
+src-tauri/Cargo.lock
+  h_2d220f5439def3 2526
+src-tauri/Cargo.toml
+  h_2d220f5439def3 3
+src-tauri/tauri.conf.json
+  h_2d220f5439def3 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b17b2ac62dd5ca821a73d69dbd753c2b274419f6",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
