@@ -404,7 +404,10 @@ fn scan(folder: &Path) -> Result<Vec<LibraryItem>, String> {
 
 /// Reconciles a fresh scan against the index: an entry whose path survived
 /// keeps its enrichment, and a new file of a known Anime inherits it by slug.
+/// Only a file still on disk can pass on its id: animepahe rotates Anime ids,
+/// so an entry whose file is gone can hold an id that no search returns now.
 fn reconcile(scanned: Vec<LibraryItem>, existing: &[LibraryItem]) -> Vec<LibraryItem> {
+    let on_disk: BTreeSet<String> = scanned.iter().map(|item| item.path.clone()).collect();
     let scanned = scanned
         .into_iter()
         .map(|mut item| {
@@ -412,9 +415,11 @@ fn reconcile(scanned: Vec<LibraryItem>, existing: &[LibraryItem]) -> Vec<Library
                 .iter()
                 .find(|old| old.path == item.path)
                 .or_else(|| {
-                    existing
-                        .iter()
-                        .find(|old| old.anime_id.is_some() && old.title_slug == item.title_slug)
+                    existing.iter().find(|old| {
+                        old.anime_id.is_some()
+                            && old.title_slug == item.title_slug
+                            && on_disk.contains(&old.path)
+                    })
                 });
 
             if let Some(previous) = previous {
@@ -969,6 +974,29 @@ mod tests {
         assert_eq!(
             groups[0].poster.as_deref(),
             Some("https://i.animepahe.pw/posters/one.jpg")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_file_does_not_inherit_the_id_of_a_gone_file() {
+        let shelf = Shelf::new();
+        shelf.touch(ONE);
+        let library = shelf.library();
+        library.refresh(&shelf.folder).unwrap();
+        library
+            .enrich(|_| async { Ok(vec![search_result("Seitokai ni mo Ana wa Aru", None)]) })
+            .await
+            .unwrap();
+
+        fs::remove_file(shelf.folder.join(ONE)).unwrap();
+        shelf.touch(TWO);
+        let groups = library.refresh(&shelf.folder).unwrap();
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].anime_id, None);
+        assert_eq!(
+            library.owned("new-id", "Seitokai ni mo Ana wa Aru").len(),
+            1
         );
     }
 
