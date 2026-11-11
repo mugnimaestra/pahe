@@ -29,6 +29,25 @@ export interface SearchResult {
   poster: string | null;
 }
 
+/** One release in animepahe's latest-releases feed. */
+export interface LatestRelease {
+  anime: SearchResult;
+  episode: number | null;
+}
+
+export interface LatestPage {
+  releases: LatestRelease[];
+  page: number;
+  lastPage: number;
+}
+
+/** One Anime to check against the Library. */
+export interface OwnsQuery {
+  animeId: string;
+  stableId: number | null;
+  title: string;
+}
+
 export type ResolverFailureKind =
   | "unreachable"
   | "deadSource"
@@ -187,6 +206,15 @@ export const ipc = {
   /** Caches Anime metadata for Library items; rejects only when the index cannot be saved. */
   enrichLibrary: (): Promise<LibraryAnime[]> =>
     invoke<LibraryAnime[]>("enrich_library"),
+  /** One page of animepahe's latest releases, newest first. */
+  browseLatest: (page: number): Promise<LatestPage> =>
+    invoke<LatestPage>("browse_latest", { page }),
+  /** animepahe's A-Z Anime index; entries have no poster or numeric id. */
+  browseIndex: (): Promise<SearchResult[]> =>
+    invoke<SearchResult[]>("browse_index"),
+  /** Whether the Library holds any Episode of each Anime, in order. */
+  libraryOwns: (anime: OwnsQuery[]): Promise<boolean[]> =>
+    invoke<boolean[]>("library_owns", { anime }),
   /** Every Episode and Quality the Library already holds for an Anime. */
   ownedEpisodes: (
     animeId: string,

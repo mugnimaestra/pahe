@@ -48,6 +48,23 @@ pub struct SearchResult {
     pub poster: Option<String>,
 }
 
+/// One release in animepahe's latest-releases feed.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestRelease {
+    pub anime: SearchResult,
+    pub episode: Option<f64>,
+}
+
+/// One page of the latest-releases feed.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LatestPage {
+    pub releases: Vec<LatestRelease>,
+    pub page: u32,
+    pub last_page: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnimeDetail {
@@ -360,6 +377,46 @@ impl Resolver {
                     self.destroy_window().await;
                 }
                 outcome => return outcome,
+            }
+        }
+    }
+
+    /// One page of animepahe's latest releases, newest first.
+    pub async fn latest(&self, base_url: &str, page: u32) -> Result<LatestPage, ResolverFailure> {
+        let url = latest_url(base_url, page.max(1))?;
+        let body = self
+            .fetch_with_retry(base_url, &url, "application/json")
+            .await?;
+        parse_latest(&body, base_url)
+    }
+
+    /// animepahe's A-Z Anime index. The index has no posters or numeric ids.
+    pub async fn index(&self, base_url: &str) -> Result<Vec<SearchResult>, ResolverFailure> {
+        let url = index_url(base_url)?;
+        let body = self.fetch_with_retry(base_url, &url, "text/html").await?;
+        parse_index(&body, base_url)
+    }
+
+    /// Fetches one page under the session lock and rebuilds the window once
+    /// after repeated connection failures, as search and detail do.
+    async fn fetch_with_retry(
+        &self,
+        base_url: &str,
+        url: &Url,
+        accept: &str,
+    ) -> Result<String, ResolverFailure> {
+        let mut session = self.session.lock().await;
+        let mut rebuilt = false;
+
+        loop {
+            let window = self.ensure_window(&mut session, base_url).await?;
+            match self.fetch_page(&window, base_url, url, accept).await {
+                Err(failure) if failure.kind == ResolverFailureKind::Unreachable && !rebuilt => {
+                    rebuilt = true;
+                    self.forget_probe().await;
+                    self.destroy_window().await;
+                }
+                outcome => return outcome.map(|result| result.body),
             }
         }
     }
@@ -1139,6 +1196,25 @@ fn search_url(base_url: &str, query: &str) -> Result<Url, ResolverFailure> {
     Ok(url)
 }
 
+fn latest_url(base_url: &str, page: u32) -> Result<Url, ResolverFailure> {
+    let mut url = Url::parse(base_url)
+        .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
+    url.set_path("/api");
+    url.query_pairs_mut()
+        .clear()
+        .append_pair("m", "airing")
+        .append_pair("page", &page.to_string());
+    Ok(url)
+}
+
+fn index_url(base_url: &str) -> Result<Url, ResolverFailure> {
+    let mut url = Url::parse(base_url)
+        .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
+    url.set_path("/anime");
+    url.set_query(None);
+    Ok(url)
+}
+
 fn anime_url(base_url: &str, anime_id: &str) -> Result<Url, ResolverFailure> {
     let mut url = Url::parse(base_url)
         .map_err(|_| ResolverFailure::failed("The Base URL is not a valid URL."))?;
@@ -1449,9 +1525,13 @@ fn decode_poll(raw: &str, id: &str) -> Option<FetchResult> {
     envelope.result
 }
 
+/// Cloudflare serves a Challenge with a 403 or 503. A 200 page can still carry
+/// its `challenge-platform` beacon script, so the body is only checked on an
+/// error status.
 fn is_challenge(result: &FetchResult) -> bool {
     result.mitigated.eq_ignore_ascii_case("challenge")
-        || (result.content_type.contains("text/html")
+        || (!(200..300).contains(&result.status)
+            && result.content_type.contains("text/html")
             && (result.body.contains("Just a moment")
                 || result.body.contains("challenge-platform")))
 }
@@ -1545,6 +1625,139 @@ pub fn parse_search(body: &str, base_url: &str) -> Result<Vec<SearchResult>, Res
             })
         })
         .collect())
+}
+
+/// The `m=airing` API: `data` holds one entry per release, with the Anime's
+/// session, numeric id, title, and an Episode snapshot image.
+pub fn parse_latest(body: &str, base_url: &str) -> Result<LatestPage, ResolverFailure> {
+    let unexpected = || ResolverFailure::failed("animepahe sent an unexpected releases response.");
+    let value: Value = serde_json::from_str(body).map_err(|_| unexpected())?;
+    let data = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(unexpected)?;
+    let base = Url::parse(base_url).ok();
+    let number = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+    };
+    let page = number("current_page").unwrap_or(1).max(1);
+    let last_page = number("last_page").unwrap_or(page).max(page);
+
+    let releases = data
+        .iter()
+        .filter_map(|item| {
+            let title = item.get("anime_title")?.as_str()?.trim();
+            let anime_id = item.get("anime_session")?.as_str()?.trim();
+            if title.is_empty() || anime_id.is_empty() {
+                return None;
+            }
+            let poster = ["snapshot", "poster"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+                .and_then(|url| absolute_url(base.as_ref(), url));
+
+            Some(LatestRelease {
+                anime: SearchResult {
+                    anime_id: anime_id.to_owned(),
+                    stable_id: item.get("anime_id").and_then(Value::as_u64),
+                    title: decode_entities(title),
+                    year: None,
+                    poster,
+                },
+                episode: item.get("episode").and_then(Value::as_f64),
+            })
+        })
+        .collect();
+
+    Ok(LatestPage {
+        releases,
+        page,
+        last_page,
+    })
+}
+
+/// The `/anime` index page links every Anime as `<a href="/anime/<session>">`.
+/// Genre, season, and other `/anime/...` links are skipped.
+pub fn parse_index(html: &str, base_url: &str) -> Result<Vec<SearchResult>, ResolverFailure> {
+    let base = Url::parse(base_url).ok();
+    let mut seen = std::collections::HashSet::new();
+    let mut results = Vec::new();
+    let mut rest = html;
+
+    while let Some(start) = rest.find("<a") {
+        let tag = &rest[start..];
+        let Some(end) = tag.find('>') else { break };
+        let attributes = &tag[..end];
+        let after = &tag[end + 1..];
+        rest = after;
+
+        if !attributes[2..].starts_with(char::is_whitespace) {
+            continue;
+        }
+        let Some(session) = attribute(attributes, "href")
+            .and_then(|href| absolute_url(base.as_ref(), &href))
+            .and_then(|href| Url::parse(&href).ok())
+            .and_then(|url| anime_session(url.path()))
+        else {
+            continue;
+        };
+
+        let text = after.find("</a>").map(|close| strip_tags(&after[..close]));
+        let title = attribute(attributes, "title")
+            .filter(|title| !title.trim().is_empty())
+            .or(text)
+            .map(|title| decode_entities(title.trim()))
+            .unwrap_or_default();
+        if title.is_empty() || !seen.insert(session.clone()) {
+            continue;
+        }
+
+        results.push(SearchResult {
+            anime_id: session,
+            stable_id: None,
+            title,
+            year: None,
+            poster: None,
+        });
+    }
+
+    if results.is_empty() {
+        return Err(ResolverFailure::failed(
+            "animepahe sent an Anime index pahe could not read.",
+        ));
+    }
+    Ok(results)
+}
+
+/// The session of an `/anime/<session>` path: a UUID-like hex-and-dash id.
+fn anime_session(path: &str) -> Option<String> {
+    let session = path.strip_prefix("/anime/")?.trim_end_matches('/');
+    let looks_like_id = session.len() >= 32
+        && session.contains('-')
+        && session
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() || ch == '-');
+
+    looks_like_id.then(|| session.to_owned())
+}
+
+fn strip_tags(html: &str) -> String {
+    let mut text = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => text.push(ch),
+            _ => {}
+        }
+    }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// One page of the release API: the parsed Episodes plus its `last_page`.
@@ -1694,7 +1907,7 @@ fn decode_entities(value: &str) -> String {
         let entity = &rest[index + 1..];
 
         let Some(end) = entity.find(';') else {
-            decoded.push_str(rest);
+            decoded.push_str(&rest[index..]);
             return decoded;
         };
 
@@ -1840,6 +2053,130 @@ mod tests {
 
         assert!(is_challenge(&challenge));
         assert!(!is_challenge(&answer));
+    }
+
+    #[test]
+    fn a_bare_ampersand_is_kept_once() {
+        assert_eq!(decode_entities("Paws & Palaces"), "Paws & Palaces");
+        assert_eq!(decode_entities("A & B & C"), "A & B & C");
+        assert_eq!(decode_entities("Tom & Jerry; Live"), "Tom & Jerry; Live");
+    }
+
+    #[test]
+    fn browse_urls_point_at_the_airing_feed_and_the_index() {
+        let latest = latest_url(BASE, 3).unwrap();
+        assert_eq!(latest.path(), "/api");
+        assert_eq!(latest.query(), Some("m=airing&page=3"));
+
+        let index = index_url("https://animepahe.pw/some/path?x=1").unwrap();
+        assert_eq!(index.as_str(), "https://animepahe.pw/anime");
+    }
+
+    #[test]
+    fn parses_the_latest_releases_feed() {
+        let body = r#"{"total":6523,"per_page":12,"current_page":2,"last_page":544,"data":[
+            {"id":78896,"anime_id":6891,"anime_title":"The Prince of Tennis II","anime_session":"eaa0ca72-43c2-4132-3e71-ff821d13af2a","episode":7,"snapshot":"https://i.animepahe.pw/uploads/snapshots/809/a.sm.webp","session":"4ee3"},
+            {"id":78895,"anime_id":6858,"anime_title":"Paws & Palaces","anime_session":"6237ade0-7380-5401-d5ca-51799bad273e","episode":12.5,"snapshot":"/uploads/snapshots/b.webp"},
+            {"id":1,"anime_title":"","anime_session":"x"},
+            {"id":2,"anime_title":"No session"}
+        ]}"#;
+
+        let page = parse_latest(body, BASE).unwrap();
+
+        assert_eq!(page.page, 2);
+        assert_eq!(page.last_page, 544);
+        assert_eq!(page.releases.len(), 2);
+        let first = &page.releases[0];
+        assert_eq!(first.anime.anime_id, "eaa0ca72-43c2-4132-3e71-ff821d13af2a");
+        assert_eq!(first.anime.stable_id, Some(6891));
+        assert_eq!(first.anime.title, "The Prince of Tennis II");
+        assert_eq!(first.episode, Some(7.0));
+        assert_eq!(
+            first.anime.poster.as_deref(),
+            Some("https://i.animepahe.pw/uploads/snapshots/809/a.sm.webp")
+        );
+        let second = &page.releases[1];
+        assert_eq!(second.anime.title, "Paws & Palaces");
+        assert_eq!(second.episode, Some(12.5));
+        assert_eq!(
+            second.anime.poster.as_deref(),
+            Some("https://animepahe.pw/uploads/snapshots/b.webp")
+        );
+    }
+
+    #[test]
+    fn the_latest_feed_defaults_its_paging_and_rejects_other_bodies() {
+        let page = parse_latest(r#"{"data":[]}"#, BASE).unwrap();
+        assert_eq!((page.page, page.last_page), (1, 1));
+        assert!(page.releases.is_empty());
+
+        assert!(parse_latest("<html>nope</html>", BASE).is_err());
+        assert!(parse_latest(r#"{"total":0}"#, BASE).is_err());
+    }
+
+    #[test]
+    fn parses_the_anime_index() {
+        let html = r#"<html><body>
+            <a href="/">home</a><a href="/anime">anime</a>
+            <a href="/anime/genre/action">Action</a>
+            <a href="/anime/7740d0dc-4cac-9022-a169-d30fa4a1aa5c" title="Anitore! XX">Anitore! XX</a>
+            <div class="tab-pane"><a href="/anime/008b4995-31ae-fcbd-db6c-b4cf032088f7" title="A Girl & Her Guard Dog">A Girl & Her Guard Dog</a> BD</div>
+            <a href="https://animepahe.pw/anime/49f2d531-e19a-1ee6-70a4-ae081f99fd0b/"><span>A Bridge</span> to the Starry Skies</a>
+            <a href="/anime/7740d0dc-4cac-9022-a169-d30fa4a1aa5c" title="Anitore! XX">Anitore! XX</a>
+            <abbr title="x">x</abbr>
+            <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+        </body></html>"#;
+
+        let index = parse_index(html, BASE).unwrap();
+
+        let entries: Vec<(&str, &str)> = index
+            .iter()
+            .map(|entry| (entry.anime_id.as_str(), entry.title.as_str()))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("7740d0dc-4cac-9022-a169-d30fa4a1aa5c", "Anitore! XX"),
+                (
+                    "008b4995-31ae-fcbd-db6c-b4cf032088f7",
+                    "A Girl & Her Guard Dog"
+                ),
+                (
+                    "49f2d531-e19a-1ee6-70a4-ae081f99fd0b",
+                    "A Bridge to the Starry Skies"
+                ),
+            ]
+        );
+        assert!(index.iter().all(|entry| entry.stable_id.is_none()
+            && entry.poster.is_none()
+            && entry.year.is_none()));
+    }
+
+    #[test]
+    fn an_index_without_anime_links_is_an_error() {
+        let failure = parse_index("<html><a href=\"/anime\">anime</a></html>", BASE).unwrap_err();
+
+        assert_eq!(failure.kind, ResolverFailureKind::Failed);
+    }
+
+    #[test]
+    fn a_page_with_the_cloudflare_beacon_is_not_a_challenge() {
+        let page = FetchResult {
+            status: 200,
+            content_type: "text/html; charset=UTF-8".to_owned(),
+            mitigated: String::new(),
+            body: r#"<html><body>index<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body></html>"#.to_owned(),
+            error: None,
+        };
+        let blocked = FetchResult {
+            status: 503,
+            mitigated: String::new(),
+            body: "<html><title>Just a moment...</title></html>".to_owned(),
+            ..page.clone()
+        };
+
+        assert!(!is_challenge(&page));
+        assert!(is_challenge(&blocked));
     }
 
     #[test]

@@ -466,3 +466,85 @@ button:disabled {
 .queue .download-error {
   flex-basis: 100%;
 }
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin: 24px 0 16px;
+}
+
+.tabs button,
+.letters button,
+.pager button {
+  padding: 6px 14px;
+  border: 1px solid #35363d;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tabs button[aria-selected="true"],
+.letters button[aria-pressed="true"] {
+  border-color: #7c5cff;
+  background: #241d3d;
+  color: #ddd0ff;
+}
+
+.letters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 14px 0;
+  max-width: 900px;
+}
+
+.pager button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.letters button {
+  min-width: 32px;
+  padding: 4px 8px;
+}
+
+.releases img,
+.releases .poster-empty {
+  aspect-ratio: 16 / 9;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 24px 0;
+}
+
+.index {
+  columns: 2 280px;
+  column-gap: 24px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  max-width: 900px;
+}
+
+.index-entry {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.index-entry:hover {
+  color: #ddd0ff;
+}

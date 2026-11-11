@@ -39,7 +39,7 @@ store. These steps cover what CI cannot see: the window, the first look, the
 second launch.
 
 - [ ] Install the artifact and launch it. A window titled **pahe** appears with
-      the sidebar (Search, Library, Queue, Settings) and the Search view. No
+      the sidebar (Search, Browse, Library, Queue, Settings) and the Search view. No
       crash, no blank window, no unhandled-error dialog.
 - [ ] Settings shows the expected defaults: Base URL
       `https://animepahe.pw`, Library folder `<Downloads>/animepahe`, Default
@@ -196,6 +196,17 @@ second launch.
     packages.
   - A distro without both in-app playback and a working external player is a
     release blocker for that distro; record it as one.
+
+## 7. Browse (all platforms)
+
+- [ ] Open **Browse**. *Latest releases* shows a grid of snapshots with an
+      Episode number. **Older** and **Newer** change the page; *Page N of M*
+      follows.
+- [ ] An Anime with an Episode in the Library shows **In Library**.
+- [ ] Open **A–Z**. Each letter lists its titles in order; **#** lists titles
+      that start with a digit or a symbol. *Filter* matches any part of a title.
+- [ ] Open an entry from each tab. The detail view shows the poster, year, and
+      Episodes; **Back to results** returns to the same tab.
 
 ## Recording results
 

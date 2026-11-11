@@ -1,4 +1,5 @@
 import { useState } from "react";
+import BrowseView from "./views/BrowseView";
 import LibraryView from "./views/LibraryView";
 import QueueView from "./views/QueueView";
 import SearchView from "./views/SearchView";
@@ -7,6 +8,7 @@ import "./App.css";
 
 const VIEWS = [
   { id: "search", label: "Search" },
+  { id: "browse", label: "Browse" },
   { id: "library", label: "Library" },
   { id: "queue", label: "Queue" },
   { id: "settings", label: "Settings" },
@@ -38,6 +40,8 @@ export default function App() {
       <main className="content">
         {view === "search" ? (
           <SearchView />
+        ) : view === "browse" ? (
+          <BrowseView />
         ) : view === "library" ? (
           <LibraryView />
         ) : view === "queue" ? (

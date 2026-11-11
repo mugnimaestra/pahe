@@ -201,6 +201,29 @@ describe("ipc", () => {
     });
   });
 
+  it("reads a latest-releases page through the browse_latest command", async () => {
+    const page = { releases: [], page: 2, lastPage: 9 };
+    invoke.mockResolvedValue(page);
+
+    await expect(ipc.browseLatest(2)).resolves.toEqual(page);
+    expect(invoke).toHaveBeenCalledWith("browse_latest", { page: 2 });
+  });
+
+  it("reads the A-Z index through the browse_index command", async () => {
+    invoke.mockResolvedValue([]);
+
+    await expect(ipc.browseIndex()).resolves.toEqual([]);
+    expect(invoke).toHaveBeenCalledWith("browse_index");
+  });
+
+  it("checks Library ownership through the library_owns command", async () => {
+    const anime = [{ animeId: "a", stableId: 68, title: "Fairy Tail" }];
+    invoke.mockResolvedValue([true]);
+
+    await expect(ipc.libraryOwns(anime)).resolves.toEqual([true]);
+    expect(invoke).toHaveBeenCalledWith("library_owns", { anime });
+  });
+
   it("lists a Library Anime's items through the library_items command", async () => {
     const items = [
       {

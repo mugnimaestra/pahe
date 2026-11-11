@@ -49,7 +49,7 @@ describe("app shell", () => {
     render(<App />);
 
     const nav = screen.getByRole("navigation", { name: "Main" });
-    for (const label of ["Search", "Library", "Queue", "Settings"]) {
+    for (const label of ["Search", "Browse", "Library", "Queue", "Settings"]) {
       expect(nav.textContent).toContain(label);
     }
     expect(screen.getByRole("heading", { name: "Search" })).toBeTruthy();

@@ -88,6 +88,25 @@ async fn search_anime(
 }
 
 #[tauri::command]
+async fn browse_latest(
+    store: tauri::State<'_, Store>,
+    resolver: tauri::State<'_, Resolver>,
+    page: u32,
+) -> Result<resolver::LatestPage, ResolverFailure> {
+    let base_url = store.get().base_url;
+    resolver.latest(&base_url, page).await
+}
+
+#[tauri::command]
+async fn browse_index(
+    store: tauri::State<'_, Store>,
+    resolver: tauri::State<'_, Resolver>,
+) -> Result<Vec<SearchResult>, ResolverFailure> {
+    let base_url = store.get().base_url;
+    resolver.index(&base_url).await
+}
+
+#[tauri::command]
 async fn load_anime(
     store: tauri::State<'_, Store>,
     resolver: tauri::State<'_, Resolver>,
@@ -211,6 +230,28 @@ fn owned_episodes(
     title: String,
 ) -> Vec<OwnedEpisode> {
     library.owned(stable_id, &anime_id, &title)
+}
+
+/// One Anime to check against the Library, as the Browse view lists it.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OwnsQuery {
+    anime_id: String,
+    stable_id: Option<u64>,
+    title: String,
+}
+
+/// Whether the Library holds any Episode of each Anime, in one call.
+#[tauri::command]
+fn library_owns(library: tauri::State<'_, Library>, anime: Vec<OwnsQuery>) -> Vec<bool> {
+    anime
+        .iter()
+        .map(|query| {
+            !library
+                .owned(query.stable_id, &query.anime_id, &query.title)
+                .is_empty()
+        })
+        .collect()
 }
 
 /// Every Library item of an Anime, for the Library's Episode list.
@@ -427,6 +468,8 @@ pub fn run() {
             save_settings,
             test_base_url,
             search_anime,
+            browse_latest,
+            browse_index,
             load_anime,
             fetch_poster,
             load_library,
@@ -436,6 +479,7 @@ pub fn run() {
             start_queue,
             resume_download,
             owned_episodes,
+            library_owns,
             library_items,
             check_library_file,
             open_externally,
