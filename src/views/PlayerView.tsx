@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { ipc, type LibraryItem } from "../ipc/client";
+import { failureOf } from "../failure";
 import { messageOf } from "../message";
 
 type State = "loading" | "idle" | "playing" | "error";
@@ -7,13 +8,31 @@ type State = "loading" | "idle" | "playing" | "error";
 /** How often a playing Episode writes its position. */
 const SAVE_INTERVAL_MS = 5000;
 
+const STREAM_FAILURE =
+  "The stream stopped. The CDN link may have expired — try again, or download the Episode.";
+
+/** A downloaded Library item, or an Episode streamed before any download. */
+export type Playback =
+  | { kind: "library"; item: LibraryItem }
+  | {
+      kind: "stream";
+      animeId: string;
+      episode: number;
+      session: string;
+      quality: string;
+    };
+
 interface PlayerViewProps {
-  item: LibraryItem;
+  playback: Playback;
   title: string;
   onBack: () => void;
 }
 
-export default function PlayerView({ item, title, onBack }: PlayerViewProps) {
+export default function PlayerView({
+  playback,
+  title,
+  onBack,
+}: PlayerViewProps) {
   const [state, setState] = useState<State>("loading");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -21,12 +40,28 @@ export default function PlayerView({ item, title, onBack }: PlayerViewProps) {
   const [opening, setOpening] = useState(false);
   const [resumeAt, setResumeAt] = useState<number | null>(null);
   const [resumed, setResumed] = useState<number | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [label, setLabel] = useState<{ quality: string; group: string }>(
+    playback.kind === "library"
+      ? { quality: playback.item.quality, group: playback.item.group }
+      : { quality: playback.quality, group: "" },
+  );
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastSave = useRef(0);
   const watched = useRef<{ seconds: number; duration: number | null } | null>(
     null,
   );
-  const positionKey = `${item.animeId ?? item.titleSlug}:${item.episode}`;
+  const library = playback.kind === "library" ? playback.item : null;
+  const episode = library?.episode ?? (playback.kind === "stream" ? playback.episode : 0);
+  // A stream and a download of the same Episode share one position.
+  const positionKey =
+    library !== null
+      ? `${library.animeId ?? library.titleSlug}:${episode}`
+      : `${playback.kind === "stream" ? playback.animeId : ""}:${episode}`;
+  const sourceKey =
+    playback.kind === "library"
+      ? playback.item.path
+      : `${playback.animeId}:${playback.session}:${playback.quality}`;
 
   useEffect(() => {
     let active = true;
@@ -38,19 +73,34 @@ export default function PlayerView({ item, title, onBack }: PlayerViewProps) {
     setResumed(null);
     watched.current = null;
 
+    // A stream resolves its Source now; a CDN URL expires, so never earlier.
+    const open: Promise<string> =
+      playback.kind === "library"
+        ? ipc
+            .checkLibraryFile(playback.item.path)
+            .then(() => ipc.libraryFileUrl(playback.item.path))
+        : ipc
+            .streamEpisode(playback.animeId, playback.session, playback.quality)
+            .then((source) => {
+              if (active) {
+                setLabel({ quality: source.quality, group: source.group });
+              }
+              return source.url;
+            });
+
     Promise.all([
-      ipc.checkLibraryFile(item.path),
+      open,
       // A lost position only means the Episode starts at the beginning.
       ipc.playbackPosition(positionKey).catch(() => null),
     ])
-      .then(([, position]) => {
+      .then(([url, position]) => {
         if (!active) return;
         setResumeAt(position);
-        setSrc(ipc.libraryFileUrl(item.path));
+        setSrc(url);
       })
       .catch((failure: unknown) => {
         if (!active) return;
-        setError(messageOf(failure));
+        setError(failureOf(failure).message);
         setState("error");
       });
 
@@ -64,7 +114,9 @@ export default function PlayerView({ item, title, onBack }: PlayerViewProps) {
           .catch(() => {});
       }
     };
-  }, [item.path, positionKey]);
+    // The playback object is rebuilt on each render; its keys say when the
+    // Episode really changed.
+  }, [sourceKey, positionKey, attempt]);
 
   function remember(video: HTMLVideoElement, now: boolean) {
     const duration = Number.isFinite(video.duration) ? video.duration : null;
@@ -94,12 +146,12 @@ export default function PlayerView({ item, title, onBack }: PlayerViewProps) {
   }
 
   async function openExternally() {
-    if (opening) return;
+    if (opening || library === null) return;
 
     setNotice(null);
     setOpening(true);
     try {
-      await ipc.openExternally(item.path);
+      await ipc.openExternally(library.path);
     } catch (failure) {
       setNotice(messageOf(failure));
     } finally {
@@ -108,7 +160,9 @@ export default function PlayerView({ item, title, onBack }: PlayerViewProps) {
   }
 
   function mediaFailed() {
-    setError(playbackFailure());
+    setError(
+      playback.kind === "stream" ? STREAM_FAILURE : playbackFailure(),
+    );
     setState("error");
   }
 
@@ -119,18 +173,32 @@ export default function PlayerView({ item, title, onBack }: PlayerViewProps) {
       </button>
 
       <header className="player-head">
-        <h1>Episode {item.episode}</h1>
+        <h1>Episode {episode}</h1>
         <p className="muted">
-          {title} · {item.quality}
-          {item.group === "" ? "" : ` · ${item.group}`}
+          {title} · {label.quality}
+          {label.group === "" ? "" : ` · ${label.group}`}
+          {playback.kind === "stream" ? " · Streaming" : ""}
         </p>
-        <button type="button" onClick={openExternally} disabled={opening}>
-          Open externally
-        </button>
+        {library !== null && (
+          <button type="button" onClick={openExternally} disabled={opening}>
+            Open externally
+          </button>
+        )}
       </header>
 
-      {state === "loading" && <p role="status">Opening Episode {item.episode}…</p>}
+      {state === "loading" && (
+        <p role="status">
+          {playback.kind === "stream" && src === null
+            ? `Finding a stream for Episode ${episode}…`
+            : `Opening Episode ${episode}…`}
+        </p>
+      )}
       {state === "error" && error !== null && <p role="alert">{error}</p>}
+      {state === "error" && playback.kind === "stream" && (
+        <button type="button" onClick={() => setAttempt((count) => count + 1)}>
+          Try again
+        </button>
+      )}
       {notice !== null && <p role="alert">{notice}</p>}
       {resumed !== null && error === null && (
         <p className="muted player-resumed">

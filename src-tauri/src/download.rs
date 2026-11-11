@@ -11,8 +11,8 @@ use url::Url;
 
 pub const EVENT: &str = "download://job";
 
-const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
-const REFERER: &str = "https://kwik.cx/";
+pub(crate) const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+pub(crate) const REFERER: &str = "https://kwik.cx/";
 /// Space kept free after a Download job's own bytes.
 const DISK_MARGIN: u64 = 500 * 1024 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);

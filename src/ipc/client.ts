@@ -129,6 +129,14 @@ export interface OwnedEpisode {
   quality: string;
 }
 
+/** An Episode the player can load before it is downloaded. */
+export interface StreamSource {
+  /** A loopback URL; it stops working when the CDN link expires. */
+  url: string;
+  quality: string;
+  group: string;
+}
+
 /** A downloaded Episode file the Library knows about. */
 export interface LibraryItem {
   animeId: string | null;
@@ -192,6 +200,13 @@ export const ipc = {
     invoke<void>("open_externally", { path }),
   /** A `src` the webview may load for a Library item's file. */
   libraryFileUrl: (path: string): string => convertFileSrc(path),
+  /** Resolves an Episode's Source now, for playback without a download. */
+  streamEpisode: (
+    animeId: string,
+    session: string,
+    quality: string,
+  ): Promise<StreamSource> =>
+    invoke<StreamSource>("stream_episode", { animeId, session, quality }),
   /** Seconds where playback of an Episode stopped, or null to start at 0. */
   playbackPosition: (key: string): Promise<number | null> =>
     invoke<number | null>("playback_position", { key }),

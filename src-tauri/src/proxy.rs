@@ -98,7 +98,7 @@ async fn serve<L: Lookup>(mut client: TcpStream, lookup: Arc<L>) -> io::Result<(
     Ok(())
 }
 
-async fn read_head(stream: &mut TcpStream) -> io::Result<Option<Vec<u8>>> {
+pub(crate) async fn read_head(stream: &mut TcpStream) -> io::Result<Option<Vec<u8>>> {
     let mut head = Vec::new();
     let mut chunk = [0u8; 1024];
 

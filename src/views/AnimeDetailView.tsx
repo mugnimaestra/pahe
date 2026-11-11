@@ -14,6 +14,7 @@ import {
 } from "../ipc/client";
 import { failureOf, failureText } from "../failure";
 import { messageOf } from "../message";
+import PlayerView, { type Playback } from "./PlayerView";
 
 type State =
   | { kind: "loading" }
@@ -40,6 +41,7 @@ export default function AnimeDetailView({
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [enqueueing, setEnqueueing] = useState(false);
+  const [streaming, setStreaming] = useState<Playback | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -189,6 +191,16 @@ export default function AnimeDetailView({
     selected.includes(episode.number),
   );
 
+  if (streaming !== null) {
+    return (
+      <PlayerView
+        playback={streaming}
+        title={result.title}
+        onBack={() => setStreaming(null)}
+      />
+    );
+  }
+
   return (
     <article className="view view-detail">
       <button type="button" className="back" onClick={onBack}>
@@ -294,6 +306,21 @@ export default function AnimeDetailView({
                       onClick={() => enqueue([episode], ownedHere)}
                     >
                       {ownedHere ? "Redownload" : "Download"}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Stream Episode ${episode.number}`}
+                      onClick={() =>
+                        setStreaming({
+                          kind: "stream",
+                          animeId: result.animeId,
+                          episode: episode.number,
+                          session: episode.session,
+                          quality,
+                        })
+                      }
+                    >
+                      Stream
                     </button>
                     {ownedQualities(episode.number).length > 0 && (
                       <span className="download-done">

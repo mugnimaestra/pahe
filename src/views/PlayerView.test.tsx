@@ -9,6 +9,7 @@ vi.mock("../ipc/client", () => ({
     openExternally: vi.fn(),
     playbackPosition: vi.fn(),
     savePlaybackPosition: vi.fn(),
+    streamEpisode: vi.fn(),
   },
 }));
 
@@ -30,7 +31,7 @@ const ITEM: LibraryItem = {
 
 function open() {
   const { container, unmount } = render(
-    <PlayerView item={ITEM} title="Seitokai Yakuindomo" onBack={() => {}} />,
+    <PlayerView playback={{ kind: "library", item: ITEM }} title="Seitokai Yakuindomo" onBack={() => {}} />,
   );
   openUnmount = unmount;
   return container;
@@ -206,5 +207,85 @@ describe("player view", () => {
     openUnmount();
 
     expect(mocked.savePlaybackPosition).toHaveBeenLastCalledWith(KEY, 302, 1420);
+  });
+
+  describe("streaming", () => {
+    const STREAM = {
+      kind: "stream" as const,
+      animeId: "anime-id",
+      episode: 5,
+      session: "session-five",
+      quality: "1080p",
+    };
+
+    function openStream() {
+      const { container } = render(
+        <PlayerView playback={STREAM} title="Fairy Tail" onBack={() => {}} />,
+      );
+      return container;
+    }
+
+    it("plays the relay URL and shares the position key with downloads", async () => {
+      mocked.streamEpisode.mockResolvedValue({
+        url: "http://127.0.0.1:5000/token",
+        quality: "1080p",
+        group: "SubsPlease",
+      });
+      const container = openStream();
+
+      expect(screen.getByRole("status").textContent).toContain(
+        "Finding a stream for Episode 5",
+      );
+      const video = await findVideo(container);
+      expect(video.getAttribute("src")).toBe("http://127.0.0.1:5000/token");
+      expect(mocked.streamEpisode).toHaveBeenCalledWith(
+        "anime-id",
+        "session-five",
+        "1080p",
+      );
+      expect(mocked.playbackPosition).toHaveBeenCalledWith("anime-id:5");
+      expect(screen.queryByRole("button", { name: "Open externally" })).toBeNull();
+      expect(mocked.checkLibraryFile).not.toHaveBeenCalled();
+    });
+
+    it("names a Resolver failure and resolves again on Try again", async () => {
+      mocked.streamEpisode
+        .mockRejectedValueOnce({
+          kind: "deadSource",
+          message: "Every Source for this Episode is dead. Pick another Quality.",
+        })
+        .mockResolvedValueOnce({
+          url: "http://127.0.0.1:5000/again",
+          quality: "1080p",
+          group: "",
+        });
+      const container = openStream();
+
+      expect((await screen.findByRole("alert")).textContent).toContain(
+        "Every Source for this Episode is dead",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+      const video = await findVideo(container);
+      expect(video.getAttribute("src")).toBe("http://127.0.0.1:5000/again");
+      expect(mocked.streamEpisode).toHaveBeenCalledTimes(2);
+    });
+
+    it("says the CDN link may have expired when the stream stops", async () => {
+      mocked.streamEpisode.mockResolvedValue({
+        url: "http://127.0.0.1:5000/token",
+        quality: "1080p",
+        group: "",
+      });
+      const container = openStream();
+      const video = await findVideo(container);
+
+      fireEvent.error(video);
+
+      expect((await screen.findByRole("alert")).textContent).toContain(
+        "may have expired",
+      );
+      expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    });
   });
 });

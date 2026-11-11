@@ -284,4 +284,21 @@ describe("ipc", () => {
     });
   });
 
+  it("streams an Episode through the stream_episode command", async () => {
+    const source = {
+      url: "http://127.0.0.1:5000/abc",
+      quality: "1080p",
+      group: "SubsPlease",
+    };
+    invoke.mockResolvedValue(source);
+
+    await expect(ipc.streamEpisode("anime", "session", "1080p")).resolves.toEqual(
+      source,
+    );
+    expect(invoke).toHaveBeenCalledWith("stream_episode", {
+      animeId: "anime",
+      session: "session",
+      quality: "1080p",
+    });
+  });
 });

@@ -11,6 +11,9 @@ vi.mock("../ipc/client", () => ({
     onDownloadJob: vi.fn(),
     ownedEpisodes: vi.fn(),
     enqueueDownloads: vi.fn(),
+    streamEpisode: vi.fn(),
+    playbackPosition: vi.fn(),
+    savePlaybackPosition: vi.fn(),
   },
 }));
 
@@ -458,5 +461,41 @@ describe("anime detail view", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(
       "Open the Anime again and pick an Episode.",
     );
+  });
+
+  it("streams an Episode in the player without a Download job", async () => {
+    mocked.loadAnime.mockResolvedValue(DETAIL);
+    mocked.streamEpisode.mockResolvedValue({
+      url: "http://127.0.0.1:5000/token",
+      quality: "720p",
+      group: "SubsPlease",
+    });
+    mocked.playbackPosition.mockResolvedValue(null);
+    mocked.savePlaybackPosition.mockResolvedValue();
+    const { container } = render(
+      <AnimeDetailView result={RESULT} onBack={vi.fn()} />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Stream Episode 2" }),
+    );
+
+    expect(mocked.streamEpisode).toHaveBeenCalledWith(
+      RESULT.animeId,
+      "session-two",
+      "1080p",
+    );
+    await waitFor(() =>
+      expect(container.querySelector("video")?.getAttribute("src")).toBe(
+        "http://127.0.0.1:5000/token",
+      ),
+    );
+    expect(screen.getByText(/720p · SubsPlease · Streaming/)).toBeTruthy();
+    expect(mocked.enqueueDownloads).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Back to Episodes/ }));
+    expect(
+      await screen.findByRole("button", { name: "Stream Episode 2" }),
+    ).toBeTruthy();
   });
 });

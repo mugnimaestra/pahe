@@ -6,6 +6,7 @@ mod poster;
 mod probe;
 mod proxy;
 mod queue;
+mod relay;
 mod resolver;
 mod settings;
 
@@ -18,6 +19,7 @@ use library::{Library, LibraryAnime, LibraryItem, OwnedEpisode};
 use positions::Positions;
 use probe::ProbeOutcome;
 use queue::{Enqueued, Queue, QueueSnapshot};
+use relay::Relay;
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
 use tauri::{Emitter, Manager};
@@ -237,6 +239,43 @@ fn playback_position(positions: tauri::State<'_, Positions>, key: String) -> Opt
     positions.get(&key)
 }
 
+/// An Episode the player can load before it is downloaded.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamSource {
+    url: String,
+    quality: String,
+    group: String,
+}
+
+/// Resolves an Episode's Source now and puts its CDN URL behind the loopback
+/// relay, so the player can stream it without a Download job.
+#[tauri::command]
+async fn stream_episode(
+    store: tauri::State<'_, Store>,
+    resolver: tauri::State<'_, Resolver>,
+    relay: tauri::State<'_, Relay>,
+    anime_id: String,
+    session: String,
+    quality: String,
+) -> Result<StreamSource, ResolverFailure> {
+    let settings = store.get();
+    let quality = if quality.trim().is_empty() {
+        settings.default_quality
+    } else {
+        quality
+    };
+    let source = resolver
+        .resolve_source(&settings.base_url, &anime_id, &session, &quality)
+        .await?;
+
+    Ok(StreamSource {
+        url: relay.register(source.cdn_url),
+        quality: source.quality,
+        group: source.group,
+    })
+}
+
 #[tauri::command]
 fn save_playback_position(
     positions: tauri::State<'_, Positions>,
@@ -289,6 +328,7 @@ pub fn run() {
             app.manage(Positions::open(
                 app_data_dir.join(positions::POSITIONS_FILE),
             ));
+            app.manage(tauri::async_runtime::block_on(Relay::start())?);
 
             let queue = Arc::new(Queue::open(app_data_dir.join(queue::QUEUE_FILE), {
                 let handle = app.handle().clone();
@@ -393,7 +433,8 @@ pub fn run() {
             check_library_file,
             open_externally,
             playback_position,
-            save_playback_position
+            save_playback_position,
+            stream_episode
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");

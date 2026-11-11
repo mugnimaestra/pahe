@@ -45,7 +45,7 @@ export default function LibraryAnimeView({
   if (playing !== null) {
     return (
       <PlayerView
-        item={playing}
+        playback={{ kind: "library", item: playing }}
         title={anime.title}
         onBack={() => setPlaying(null)}
       />
