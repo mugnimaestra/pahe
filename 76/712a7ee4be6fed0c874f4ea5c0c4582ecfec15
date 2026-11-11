@@ -1,0 +1,32 @@
+docs/manual-smoke-checklist.md
+  h_2d220f5439def3 42,200-210
+src-tauri/src/lib.rs
+  h_2d220f5439def3 90-108,235-256,471-472,482
+src-tauri/src/resolver.rs
+  h_2d220f5439def3 51-67,384-423,1199-1217,1528-1530,1533-1534,1630-1762,1910,2058-2181
+src/App.css
+  h_2d220f5439def3 469-550
+src/App.test.tsx
+  h_2d220f5439def3 52
+src/App.tsx
+  h_2d220f5439def3 2,11,43-44
+src/ipc/client.test.ts
+  h_2d220f5439def3 204-226
+src/ipc/client.ts
+  h_2d220f5439def3 32-50,209-217
+src/views/BrowseView.test.tsx
+  h_2d220f5439def3 1-213
+src/views/BrowseView.tsx
+  h_2d220f5439def3 1-289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "76712a7ee4be6fed0c874f4ea5c0c4582ecfec15",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
