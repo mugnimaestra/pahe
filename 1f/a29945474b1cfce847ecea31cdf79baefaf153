@@ -1,0 +1,16 @@
+.github/workflows/ci.yml
+  h_2d220f5439def3 23-25,27-32,92-94,96-101
+.github/workflows/release.yml
+  h_2d220f5439def3 38-40,42-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1fa29945474b1cfce847ecea31cdf79baefaf153",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
