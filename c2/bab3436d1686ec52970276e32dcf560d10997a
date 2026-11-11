@@ -1,0 +1,16 @@
+src/views/PlayerView.test.tsx
+  h_2d220f5439def3 246
+src/views/PlayerView.tsx
+  h_2d220f5439def3 56-58,252-256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2bab3436d1686ec52970276e32dcf560d10997a",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
