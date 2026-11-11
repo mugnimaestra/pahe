@@ -20,9 +20,16 @@ jobs:
           cache: pnpm
 
       - name: Install Linux dependencies
+        # A stalled Azure apt mirror can hang apt for hours (actions/runner-images#14594).
+        # Bound each call so apt falls through to archive.ubuntu.com or fails loudly.
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils dbus-x11
+          APT_OPTS=(-o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          for attempt in 1 2 3; do
+            timeout --kill-after=30s 180 sudo apt-get "${APT_OPTS[@]}" update && break
+            echo "::warning::apt-get update attempt $attempt failed"
+          done
+          timeout --kill-after=30s 480 sudo apt-get "${APT_OPTS[@]}" install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils dbus-x11
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -82,9 +89,16 @@ jobs:
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
+        # A stalled Azure apt mirror can hang apt for hours (actions/runner-images#14594).
+        # Bound each call so apt falls through to archive.ubuntu.com or fails loudly.
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils dbus-x11
+          APT_OPTS=(-o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15)
+          for attempt in 1 2 3; do
+            timeout --kill-after=30s 180 sudo apt-get "${APT_OPTS[@]}" update && break
+            echo "::warning::apt-get update attempt $attempt failed"
+          done
+          timeout --kill-after=30s 480 sudo apt-get "${APT_OPTS[@]}" install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils dbus-x11
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
