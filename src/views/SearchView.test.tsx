@@ -84,6 +84,37 @@ describe("search view", () => {
     expect(container.querySelector(".poster-empty")).toBeTruthy();
   });
 
+  it("marks a result the Library already owns", async () => {
+    const other = { ...RESULT, animeId: "other", title: "Other Anime" };
+    mocked.searchAnime.mockResolvedValue([RESULT, other]);
+    mocked.ownedEpisodes.mockImplementation(async (animeId) =>
+      animeId === RESULT.animeId ? [{ episode: 1, quality: "1080p" }] : [],
+    );
+    render(<SearchView />);
+
+    search("seitokai");
+
+    const owned = await screen.findByRole("button", { name: /Seitokai/ });
+    expect(owned.textContent).toContain("In Library");
+    const notOwned = screen.getByRole("button", { name: /Other Anime/ });
+    expect(notOwned.textContent).not.toContain("In Library");
+    expect(mocked.ownedEpisodes).toHaveBeenCalledWith(
+      RESULT.animeId,
+      RESULT.title,
+    );
+  });
+
+  it("keeps results when the Library lookup fails", async () => {
+    mocked.searchAnime.mockResolvedValue([RESULT]);
+    mocked.ownedEpisodes.mockRejectedValue("library lock poisoned");
+    render(<SearchView />);
+
+    search("seitokai");
+
+    expect(await screen.findByText(RESULT.title)).toBeTruthy();
+    expect(screen.queryByText("In Library")).toBeNull();
+  });
+
   it("says so when no Anime matched", async () => {
     mocked.searchAnime.mockResolvedValue([]);
     render(<SearchView />);

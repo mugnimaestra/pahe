@@ -9,7 +9,7 @@ type State =
   | { kind: "idle" }
   | { kind: "searching" }
   | { kind: "empty"; query: string }
-  | { kind: "results"; results: SearchResult[] }
+  | { kind: "results"; results: SearchResult[]; inLibrary: boolean[] }
   | { kind: "unreachable"; message: string }
   | { kind: "error"; message: string };
 
@@ -32,10 +32,19 @@ export default function SearchView() {
 
     try {
       const results = await ipc.searchAnime(title);
+      // A failed Library lookup only hides the badge; the results still show.
+      const inLibrary = await Promise.all(
+        results.map((result) =>
+          ipc.ownedEpisodes(result.animeId, result.title).then(
+            (owned) => owned.length > 0,
+            () => false,
+          ),
+        ),
+      );
       setState(
         results.length === 0
           ? { kind: "empty", query: title }
-          : { kind: "results", results },
+          : { kind: "results", results, inLibrary },
       );
     } catch (error) {
       const failure = failureOf(error);
@@ -108,7 +117,7 @@ export default function SearchView() {
 
       {state.kind === "results" && (
         <ul className="results" aria-label="Search results">
-          {state.results.map((result) => (
+          {state.results.map((result, index) => (
             <li key={result.animeId}>
               <button
                 type="button"
@@ -122,6 +131,9 @@ export default function SearchView() {
                 <span className="result-title">{result.title}</span>
                 {result.year !== null && (
                   <span className="muted">{result.year}</span>
+                )}
+                {state.inLibrary[index] && (
+                  <span className="download-done">In Library</span>
                 )}
               </button>
             </li>
