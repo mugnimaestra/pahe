@@ -243,7 +243,7 @@ describe("player view", () => {
         "session-five",
         "1080p",
       );
-      expect(mocked.playbackPosition).toHaveBeenCalledWith("anime-id:5");
+      expect(mocked.playbackPosition).toHaveBeenCalledWith("Fairy_Tail:5");
       expect(screen.queryByRole("button", { name: "Open externally" })).toBeNull();
       expect(mocked.checkLibraryFile).not.toHaveBeenCalled();
     });

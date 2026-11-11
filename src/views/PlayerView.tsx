@@ -53,11 +53,9 @@ export default function PlayerView({
   );
   const library = playback.kind === "library" ? playback.item : null;
   const episode = library?.episode ?? (playback.kind === "stream" ? playback.episode : 0);
-  // A stream and a download of the same Episode share one position.
-  const positionKey =
-    library !== null
-      ? `${library.animeId ?? library.titleSlug}:${episode}`
-      : `${playback.kind === "stream" ? playback.animeId : ""}:${episode}`;
+  // A stream and a download of the same Episode share one position. The key
+  // is the title slug, not the Anime id, because animepahe rotates its ids.
+  const positionKey = `${library?.titleSlug ?? titleSlug(title)}:${episode}`;
   const sourceKey =
     playback.kind === "library"
       ? playback.item.path
@@ -250,4 +248,9 @@ function playbackFailure(): string {
   return /Linux/.test(navigator.userAgent)
     ? "This Episode could not be played in the app. On Linux, the system GStreamer codecs may be missing — use Open externally instead."
     : "This Episode could not be played in the app. The file may be damaged or its format unsupported — use Open externally instead.";
+}
+
+/** The Library filename slug of a title, as `download::title_slug` makes it. */
+function titleSlug(title: string): string {
+  return title.split(/[^\p{L}\p{N}]+/u).filter(Boolean).join("_") || "Episode";
 }
