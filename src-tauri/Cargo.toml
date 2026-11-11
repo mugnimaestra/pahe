@@ -1,6 +1,6 @@
 [package]
 name = "pahe"
-version = "0.1.2"
+version = "0.1.3"
 description = "Desktop client for animepahe"
 authors = ["Muhammad Mugni Hadi"]
 edition = "2024"
