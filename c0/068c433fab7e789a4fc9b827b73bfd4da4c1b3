@@ -1,0 +1,42 @@
+GLOSSARY.md
+  h_2d220f5439def3 55-62
+src-tauri/src/lib.rs
+  h_2d220f5439def3 12,27-29,341-407,450-452,562-569
+src-tauri/src/watchlist.rs
+  h_2d220f5439def3 1-763
+src/App.css
+  h_2d220f5439def3 551-781
+src/App.tsx
+  h_2d220f5439def3 7,13,47-48
+src/ipc/client.ts
+  h_2d220f5439def3 186-254,339-368,377-382
+src/views/AnimeDetailView.tsx
+  h_2d220f5439def3 14-15,19-24,53-56,112-146,242-280,282-289,294-311,333-375,487-496
+src/views/BrowseView.tsx
+  h_2d220f5439def3 5-11,67-79,200-206,224-228,231-232
+src/views/LibraryAnimeView.tsx
+  h_2d220f5439def3 6,9,28-30,50-63,65-67,72-74,109-118
+src/views/PlayerView.tsx
+  h_2d220f5439def3 30-33,40-43,70-71,132-148,166-184,235-246
+src/views/SearchView.tsx
+  h_2d220f5439def3 1,5-6,22-34,134-140,158-162,165-166
+src/views/SettingsView.tsx
+  h_2d220f5439def3 1,5,27-32,85-121,257-298
+src/views/WatchlistView.test.tsx
+  h_2d220f5439def3 1-139
+src/views/WatchlistView.tsx
+  h_2d220f5439def3 1-500
+src/watchlist.ts
+  h_2d220f5439def3 1-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0068c433fab7e789a4fc9b827b73bfd4da4c1b3",
+  "prompts": {},
+  "humans": {
+    "h_2d220f5439def3": {
+      "author": "Muhammad Mugni Hadi <mugni@rukita.co>"
+    }
+  }
+}
