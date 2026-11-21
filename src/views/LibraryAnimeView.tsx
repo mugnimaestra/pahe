@@ -3,8 +3,10 @@ import {
   ipc,
   type LibraryAnime,
   type LibraryItem,
+  type WatchlistEntry,
 } from "../ipc/client";
 import { messageOf } from "../message";
+import { formatClock } from "../watchlist";
 import PlayerView from "./PlayerView";
 
 type State =
@@ -23,6 +25,9 @@ export default function LibraryAnimeView({
 }: LibraryAnimeViewProps) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [playing, setPlaying] = useState<LibraryItem | null>(null);
+  const [watchlistEntry, setWatchlistEntry] = useState<WatchlistEntry | null>(
+    null,
+  );
 
   useEffect(() => {
     let active = true;
@@ -42,11 +47,31 @@ export default function LibraryAnimeView({
     };
   }, [anime.animeId, anime.stableId, anime.title]);
 
+  useEffect(() => {
+    let active = true;
+    Promise.resolve(
+      ipc.getWatchlistEntry?.(anime.stableId, anime.animeId, anime.title),
+    )
+      .then((entry) => {
+        if (active) setWatchlistEntry(entry ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [anime.animeId, anime.stableId, anime.title, playing]);
+
   if (playing !== null) {
+    const items = state.kind === "ready" ? state.items : [];
+    const nextItem =
+      items.find((candidate) => candidate.episode > playing.episode) ?? null;
     return (
       <PlayerView
         playback={{ kind: "library", item: playing }}
         title={anime.title}
+        poster={anime.poster}
+        nextEpisode={nextItem ? { episode: nextItem.episode } : null}
+        onNextEpisode={nextItem ? () => setPlaying(nextItem) : undefined}
         onBack={() => setPlaying(null)}
       />
     );
@@ -81,6 +106,16 @@ export default function LibraryAnimeView({
                 {item.quality}
                 {item.group === "" ? "" : ` · ${item.group}`}
               </span>
+              {watchlistEntry !== null &&
+                item.episode <= watchlistEntry.progress && (
+                  <span className="episode-watched">Watched</span>
+                )}
+              {watchlistEntry?.lastWatched?.episode === item.episode &&
+                watchlistEntry.lastWatched.positionSeconds > 0 && (
+                  <span className="watchlist-badge">
+                    Paused {formatClock(watchlistEntry.lastWatched.positionSeconds)}
+                  </span>
+                )}
               <div className="episode-download">
                 <button type="button" onClick={() => setPlaying(item)}>
                   Play

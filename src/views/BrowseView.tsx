@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import Poster from "../components/Poster";
 import { failureOf } from "../failure";
 import { useResolverChallenge } from "../hooks/useResolverChallenge";
-import { ipc, type LatestPage, type SearchResult } from "../ipc/client";
+import {
+  ipc,
+  type LatestPage,
+  type SearchResult,
+  type WatchlistEntry,
+} from "../ipc/client";
+import { findWatchlistEntry, WATCH_STATUS_LABELS } from "../watchlist";
 import AnimeDetailView from "./AnimeDetailView";
 
 type Tab = "latest" | "index";
@@ -58,6 +64,19 @@ export default function BrowseView() {
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [challenge] = useResolverChallenge();
+  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve(ipc.listWatchlist?.())
+      .then((entries) => {
+        if (active && Array.isArray(entries)) setWatchlist(entries);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [selected]);
 
   useEffect(() => {
     if (tab !== "latest") return;
@@ -178,7 +197,13 @@ export default function BrowseView() {
           {latest.kind === "ready" && (
             <>
               <ul className="results releases" aria-label="Latest releases">
-                {latest.value.releases.map((release, i) => (
+                {latest.value.releases.map((release, i) => {
+                  const tracked = findWatchlistEntry(watchlist, {
+                    stableId: release.anime.stableId,
+                    animeId: release.anime.animeId,
+                    title: release.anime.title,
+                  });
+                  return (
                   <li key={`${release.anime.animeId}-${release.episode ?? i}`}>
                     <button
                       type="button"
@@ -196,9 +221,15 @@ export default function BrowseView() {
                       {latestOwned[i] && (
                         <span className="download-done">In Library</span>
                       )}
+                      {tracked && (
+                        <span className="watchlist-badge">
+                          {WATCH_STATUS_LABELS[tracked.status]}
+                        </span>
+                      )}
                     </button>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
               <div className="pager" role="group" aria-label="Pages">
                 <button

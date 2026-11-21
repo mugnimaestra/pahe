@@ -11,9 +11,17 @@ import {
   type OwnedEpisode,
   type SearchResult,
   type SkippedDownload,
+  type WatchStatus,
+  type WatchlistEntry,
 } from "../ipc/client";
 import { failureOf, failureText } from "../failure";
 import { messageOf } from "../message";
+import {
+  findWatchlistEntry,
+  formatClock,
+  WATCH_STATUSES,
+  WATCH_STATUS_LABELS,
+} from "../watchlist";
 import PlayerView, { type Playback } from "./PlayerView";
 
 type State =
@@ -42,6 +50,10 @@ export default function AnimeDetailView({
   const [notice, setNotice] = useState<Notice | null>(null);
   const [enqueueing, setEnqueueing] = useState(false);
   const [streaming, setStreaming] = useState<Playback | null>(null);
+  const [watchlistEntry, setWatchlistEntry] = useState<WatchlistEntry | null>(
+    null,
+  );
+  const [savingWatchlist, setSavingWatchlist] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -94,6 +106,41 @@ export default function AnimeDetailView({
 
     return () => {
       active = false;
+    };
+  }, [result.animeId, result.stableId, result.title]);
+
+  useEffect(() => {
+    let active = true;
+    let stop: (() => void) | undefined;
+
+    Promise.resolve(
+      ipc.getWatchlistEntry?.(result.stableId, result.animeId, result.title),
+    )
+      .then((entry) => {
+        if (active) setWatchlistEntry(entry ?? null);
+      })
+      .catch(() => {});
+
+    Promise.resolve(
+      ipc.onWatchlistUpdated?.((entries) => {
+        if (!active) return;
+        const match = findWatchlistEntry(entries, {
+          stableId: result.stableId,
+          animeId: result.animeId,
+          title: result.title,
+        });
+        setWatchlistEntry(match ?? null);
+      }),
+    )
+      .then((unlisten) => {
+        if (active) stop = unlisten;
+        else unlisten?.();
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+      stop?.();
     };
   }, [result.animeId, result.stableId, result.title]);
 
@@ -192,11 +239,76 @@ export default function AnimeDetailView({
     selected.includes(episode.number),
   );
 
+  async function updateWatchlistStatus(status: WatchStatus) {
+    if (savingWatchlist) return;
+    setSavingWatchlist(true);
+    try {
+      const saved = await ipc.upsertWatchlistEntry({
+        stableId: result.stableId,
+        animeId: result.animeId,
+        title: result.title,
+        poster: result.poster,
+        status,
+        progress: watchlistEntry?.progress ?? 0,
+        totalEpisodes:
+          episodes.length > 0
+            ? episodes.length
+            : (watchlistEntry?.totalEpisodes ?? null),
+        score: watchlistEntry?.score ?? null,
+        notes: watchlistEntry?.notes ?? null,
+      });
+      setWatchlistEntry(saved);
+    } catch (error) {
+      setNotice({ kind: "error", message: messageOf(error) });
+    } finally {
+      setSavingWatchlist(false);
+    }
+  }
+
+  async function removeFromWatchlist() {
+    if (!watchlistEntry || savingWatchlist) return;
+    setSavingWatchlist(true);
+    try {
+      await ipc.removeWatchlistEntry(watchlistEntry.key);
+      setWatchlistEntry(null);
+    } catch (error) {
+      setNotice({ kind: "error", message: messageOf(error) });
+    } finally {
+      setSavingWatchlist(false);
+    }
+  }
+
   if (streaming !== null) {
+    const currentIndex =
+      streaming.kind === "stream"
+        ? episodes.findIndex((ep) => ep.number === streaming.episode)
+        : -1;
+    const nextEp =
+      currentIndex >= 0 && currentIndex + 1 < episodes.length
+        ? episodes[currentIndex + 1]
+        : null;
     return (
       <PlayerView
         playback={streaming}
         title={result.title}
+        poster={result.poster}
+        totalEpisodes={episodes.length > 0 ? episodes.length : null}
+        nextEpisode={
+          nextEp ? { episode: nextEp.number, session: nextEp.session } : null
+        }
+        onNextEpisode={
+          nextEp
+            ? () =>
+                setStreaming({
+                  kind: "stream",
+                  animeId: result.animeId,
+                  stableId: result.stableId,
+                  episode: nextEp.number,
+                  session: nextEp.session,
+                  quality: qualityOf(nextEp.number),
+                })
+            : undefined
+        }
         onBack={() => setStreaming(null)}
       />
     );
@@ -218,6 +330,49 @@ export default function AnimeDetailView({
           {state.kind === "ready" && state.detail.synopsis !== null && (
             <p className="synopsis">{state.detail.synopsis}</p>
           )}
+          <div className="detail-watchlist">
+            {watchlistEntry === null ? (
+              <button
+                type="button"
+                disabled={savingWatchlist}
+                onClick={() => updateWatchlistStatus("planToWatch")}
+              >
+                + Add to Watchlist
+              </button>
+            ) : (
+              <>
+                <select
+                  aria-label="Watchlist status"
+                  disabled={savingWatchlist}
+                  value={watchlistEntry.status}
+                  onChange={(event) =>
+                    updateWatchlistStatus(
+                      event.currentTarget.value as WatchStatus,
+                    )
+                  }
+                >
+                  {WATCH_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {WATCH_STATUS_LABELS[status]}
+                    </option>
+                  ))}
+                </select>
+                <span className="muted">
+                  Progress: {watchlistEntry.progress}
+                  {watchlistEntry.totalEpisodes !== null
+                    ? ` / ${watchlistEntry.totalEpisodes}`
+                    : ""}
+                </span>
+                <button
+                  type="button"
+                  disabled={savingWatchlist}
+                  onClick={removeFromWatchlist}
+                >
+                  Remove from Watchlist
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -329,6 +484,16 @@ export default function AnimeDetailView({
                         Owned {ownedQualities(episode.number).join(", ")}
                       </span>
                     )}
+                    {watchlistEntry !== null &&
+                      episode.number <= watchlistEntry.progress && (
+                        <span className="episode-watched">Watched</span>
+                      )}
+                    {watchlistEntry?.lastWatched?.episode === episode.number &&
+                      watchlistEntry.lastWatched.positionSeconds > 0 && (
+                        <span className="watchlist-badge">
+                          Paused {formatClock(watchlistEntry.lastWatched.positionSeconds)}
+                        </span>
+                      )}
                     <EpisodeDownloadStatus job={job} />
                   </div>
                 </li>

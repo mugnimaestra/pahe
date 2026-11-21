@@ -52,6 +52,14 @@ _Avoid_: download, entry
 The folder of downloaded Episode files plus the metadata index pahe keeps.
 _Avoid_: collection, vault
 
+**Watchlist**:
+The local AniList-style list of Anime the user tracks (status, Episode progress, score, notes) together with their Continue Watching resume history.
+_Avoid_: bookmarks, favorites
+
+**Watchlist entry**:
+One Anime record in the Watchlist, keyed by its numeric anime id (or title slug fallback).
+_Avoid_: tracker row, bookmark item
+
 **Base URL**:
 The animepahe origin pahe talks to, default `https://animepahe.pw`, configurable to survive domain changes.
 _Avoid_: host, site URL

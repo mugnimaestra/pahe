@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import Poster from "../components/Poster";
 import { failureOf } from "../failure";
 import { useResolverChallenge } from "../hooks/useResolverChallenge";
-import { ipc, type SearchResult } from "../ipc/client";
+import { ipc, type SearchResult, type WatchlistEntry } from "../ipc/client";
+import { findWatchlistEntry, WATCH_STATUS_LABELS } from "../watchlist";
 import AnimeDetailView from "./AnimeDetailView";
 
 type State =
@@ -18,6 +19,19 @@ export default function SearchView() {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [challenge, setChallenge] = useResolverChallenge();
+  const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve(ipc.listWatchlist?.())
+      .then((entries) => {
+        if (active && Array.isArray(entries)) setWatchlist(entries);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [selected]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -117,7 +131,13 @@ export default function SearchView() {
 
       {state.kind === "results" && (
         <ul className="results" aria-label="Search results">
-          {state.results.map((result, index) => (
+          {state.results.map((result, index) => {
+            const tracked = findWatchlistEntry(watchlist, {
+              stableId: result.stableId,
+              animeId: result.animeId,
+              title: result.title,
+            });
+            return (
             <li key={result.animeId}>
               <button
                 type="button"
@@ -135,9 +155,15 @@ export default function SearchView() {
                 {state.inLibrary[index] && (
                   <span className="download-done">In Library</span>
                 )}
+                {tracked && (
+                  <span className="watchlist-badge">
+                    {WATCH_STATUS_LABELS[tracked.status]}
+                  </span>
+                )}
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>

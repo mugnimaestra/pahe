@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { QUALITIES } from "../downloads";
 import {
   ipc,
+  type ImportMode,
   type ProbeOutcome,
   type ProxyPolicy,
   type Settings,
@@ -23,6 +24,12 @@ export default function SettingsView() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [importMode, setImportMode] = useState<ImportMode>("merge");
+  const [backupNotice, setBackupNotice] = useState<{
+    kind: "ok" | "error";
+    message: string;
+  } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -72,6 +79,43 @@ export default function SettingsView() {
       setNotice({ kind: "error", message: messageOf(error) });
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function handleExportWatchlist() {
+    setBackupNotice(null);
+    try {
+      const json = await ipc.exportWatchlist();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "pahe-watchlist.json";
+      link.click();
+      URL.revokeObjectURL(url);
+      setBackupNotice({
+        kind: "ok",
+        message: "Watchlist exported to pahe-watchlist.json.",
+      });
+    } catch (error) {
+      setBackupNotice({ kind: "error", message: messageOf(error) });
+    }
+  }
+
+  async function handleImportWatchlist(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    setBackupNotice(null);
+    try {
+      const text = await file.text();
+      const outcome = await ipc.importWatchlist(text, importMode);
+      setBackupNotice({
+        kind: "ok",
+        message: `Imported ${outcome.imported} Watchlist entries (${outcome.total} total).`,
+      });
+    } catch (error) {
+      setBackupNotice({ kind: "error", message: messageOf(error) });
     }
   }
 
@@ -210,6 +254,48 @@ export default function SettingsView() {
           </button>
         </form>
       )}
+
+      <section className="backup-section" aria-labelledby="backup-heading">
+        <h2 id="backup-heading">Watchlist backup</h2>
+        <p className="muted">
+          Export your local Watchlist as JSON or import a backup from another
+          machine.
+        </p>
+        <div className="backup-controls">
+          <button type="button" onClick={handleExportWatchlist}>
+            Export Watchlist
+          </button>
+          <select
+            aria-label="Import mode"
+            value={importMode}
+            onChange={(event) =>
+              setImportMode(event.currentTarget.value as ImportMode)
+            }
+          >
+            <option value="merge">Merge (keep newer)</option>
+            <option value="replace">Replace all</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Import Watchlist
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            aria-label="Choose Watchlist JSON file"
+            hidden
+            onChange={handleImportWatchlist}
+          />
+        </div>
+        {backupNotice && (
+          <p role={backupNotice.kind === "error" ? "alert" : "status"}>
+            {backupNotice.message}
+          </p>
+        )}
+      </section>
     </section>
   );
 }

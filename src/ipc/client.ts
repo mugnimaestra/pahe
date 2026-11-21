@@ -183,6 +183,75 @@ export interface QueueSnapshot {
   challenge: boolean;
 }
 
+export type WatchStatus =
+  | "watching"
+  | "planToWatch"
+  | "completed"
+  | "onHold"
+  | "dropped";
+
+export type WatchSourceKind = "stream" | "library";
+
+export type ImportMode = "merge" | "replace";
+
+export interface LastWatched {
+  episode: number;
+  session: string | null;
+  quality: string | null;
+  positionSeconds: number;
+  durationSeconds: number | null;
+  sourceKind: WatchSourceKind;
+  updatedAt: number;
+}
+
+export interface WatchlistEntry {
+  key: string;
+  stableId: number | null;
+  animeId: string | null;
+  title: string;
+  poster: string | null;
+  status: WatchStatus;
+  progress: number;
+  totalEpisodes: number | null;
+  score: number | null;
+  notes: string;
+  lastWatched: LastWatched | null;
+  updatedAt: number;
+}
+
+export interface UpsertWatchlistEntry {
+  stableId: number | null;
+  animeId: string | null;
+  title: string;
+  poster: string | null;
+  status: WatchStatus;
+  progress: number | null;
+  totalEpisodes: number | null;
+  score: number | null;
+  notes: string | null;
+}
+
+export interface RecordWatchProgress {
+  stableId: number | null;
+  animeId: string | null;
+  title: string;
+  poster: string | null;
+  episode: number;
+  session: string | null;
+  quality: string | null;
+  positionSeconds: number;
+  durationSeconds: number | null;
+  sourceKind: WatchSourceKind;
+  totalEpisodes: number | null;
+  nextEpisode: number | null;
+  nextSession: string | null;
+}
+
+export interface ImportOutcome {
+  imported: number;
+  total: number;
+}
+
 /**
  * The only bridge to Rust. UI code imports this module, never `@tauri-apps/api`.
  */
@@ -267,12 +336,48 @@ export const ipc = {
   /** Resumes an interrupted or paused job, or retries a failed one. */
   resumeDownload: (jobId: string): Promise<QueueSnapshot> =>
     invoke<QueueSnapshot>("resume_download", { jobId }),
+  /** Every local Watchlist entry, newest activity first. */
+  listWatchlist: (): Promise<WatchlistEntry[]> =>
+    invoke<WatchlistEntry[]>("list_watchlist"),
+  /** Looks up one Anime in the local Watchlist. */
+  getWatchlistEntry: (
+    stableId: number | null,
+    animeId: string | null,
+    title: string,
+  ): Promise<WatchlistEntry | null> =>
+    invoke<WatchlistEntry | null>("get_watchlist_entry", {
+      stableId,
+      animeId,
+      title,
+    }),
+  /** Adds or updates a Watchlist entry. */
+  upsertWatchlistEntry: (entry: UpsertWatchlistEntry): Promise<WatchlistEntry> =>
+    invoke<WatchlistEntry>("upsert_watchlist_entry", { entry }),
+  /** Removes a Watchlist entry by key. */
+  removeWatchlistEntry: (key: string): Promise<boolean> =>
+    invoke<boolean>("remove_watchlist_entry", { key }),
+  /** Records playback progress and updates Continue Watching / completion. */
+  recordWatchProgress: (
+    progress: RecordWatchProgress,
+  ): Promise<WatchlistEntry> =>
+    invoke<WatchlistEntry>("record_watch_progress", { progress }),
+  /** Exports the local Watchlist as versioned JSON. */
+  exportWatchlist: (): Promise<string> => invoke<string>("export_watchlist"),
+  /** Imports a versioned Watchlist JSON backup. */
+  importWatchlist: (json: string, mode: ImportMode): Promise<ImportOutcome> =>
+    invoke<ImportOutcome>("import_watchlist", { json, mode }),
   onDownloadJob: (handler: (job: DownloadJob) => void): Promise<UnlistenFn> =>
     listen<DownloadJob>("download://job", (event) => handler(event.payload)),
   onResolverStatus: (
     handler: (status: ResolverStatus) => void,
   ): Promise<UnlistenFn> =>
     listen<ResolverStatus>("resolver://status", (event) =>
+      handler(event.payload),
+    ),
+  onWatchlistUpdated: (
+    handler: (entries: WatchlistEntry[]) => void,
+  ): Promise<UnlistenFn> =>
+    listen<WatchlistEntry[]>("watchlist://updated", (event) =>
       handler(event.payload),
     ),
 };

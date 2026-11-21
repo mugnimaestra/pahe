@@ -27,12 +27,20 @@ interface PlayerViewProps {
   playback: Playback;
   title: string;
   onBack: () => void;
+  poster?: string | null;
+  totalEpisodes?: number | null;
+  nextEpisode?: { episode: number; session?: string | null } | null;
+  onNextEpisode?: () => void;
 }
 
 export default function PlayerView({
   playback,
   title,
   onBack,
+  poster = null,
+  totalEpisodes = null,
+  nextEpisode = null,
+  onNextEpisode,
 }: PlayerViewProps) {
   const [state, setState] = useState<State>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +67,8 @@ export default function PlayerView({
   // key to migrate from, like the title slug used before the numeric id.
   const stableId = library?.stableId ?? (playback.kind === "stream" ? playback.stableId : null);
   const sessionId = library?.animeId ?? (playback.kind === "stream" ? playback.animeId : null);
+  const resolvedPoster = poster ?? library?.poster ?? null;
+  const episodeSession = playback.kind === "stream" ? playback.session : null;
   const positionKeys = [
     ...(stableId !== null ? [`#${stableId}:${episode}`] : []),
     `${library?.titleSlug ?? titleSlug(title)}:${episode}`,
@@ -119,6 +129,23 @@ export default function PlayerView({
         ipc
           .savePlaybackPosition(positionKeys, last.seconds, last.duration)
           .catch(() => {});
+        Promise.resolve(
+          ipc.recordWatchProgress?.({
+            stableId,
+            animeId: sessionId,
+            title,
+            poster: resolvedPoster,
+            episode,
+            session: episodeSession,
+            quality: label.quality,
+            positionSeconds: last.seconds,
+            durationSeconds: last.duration,
+            sourceKind: playback.kind === "library" ? "library" : "stream",
+            totalEpisodes,
+            nextEpisode: nextEpisode?.episode ?? null,
+            nextSession: nextEpisode?.session ?? null,
+          }),
+        ).catch(() => {});
       }
     };
     // The playback object is rebuilt on each render; its keys say when the
@@ -136,6 +163,25 @@ export default function PlayerView({
       .catch(() => {
         // The position is a convenience; playback goes on without it.
       });
+    Promise.resolve(
+      ipc.recordWatchProgress?.({
+        stableId,
+        animeId: sessionId,
+        title,
+        poster: resolvedPoster,
+        episode,
+        session: episodeSession,
+        quality: label.quality,
+        positionSeconds: video.currentTime,
+        durationSeconds: duration,
+        sourceKind: playback.kind === "library" ? "library" : "stream",
+        totalEpisodes,
+        nextEpisode: nextEpisode?.episode ?? null,
+        nextSession: nextEpisode?.session ?? null,
+      }),
+    ).catch(() => {
+      // Watchlist tracking is advisory; playback continues on failure.
+    });
   }
 
   function loadedMetadata(event: SyntheticEvent<HTMLVideoElement>) {
@@ -186,11 +232,18 @@ export default function PlayerView({
           {label.group === "" ? "" : ` · ${label.group}`}
           {playback.kind === "stream" ? " · Streaming" : ""}
         </p>
-        {library !== null && (
-          <button type="button" onClick={openExternally} disabled={opening}>
-            Open externally
-          </button>
-        )}
+        <div className="player-actions">
+          {onNextEpisode && nextEpisode && (
+            <button type="button" onClick={onNextEpisode}>
+              Next Episode (Ep {nextEpisode.episode})
+            </button>
+          )}
+          {library !== null && (
+            <button type="button" onClick={openExternally} disabled={opening}>
+              Open externally
+            </button>
+          )}
+        </div>
       </header>
 
       {state === "loading" && (

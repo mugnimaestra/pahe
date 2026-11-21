@@ -9,6 +9,7 @@ mod queue;
 mod relay;
 mod resolver;
 mod settings;
+mod watchlist;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,9 @@ use relay::Relay;
 use resolver::{AnimeDetail, Resolver, ResolverFailure, SearchResult};
 use settings::{Settings, Store};
 use tauri::{Emitter, Manager};
+use watchlist::{
+    ImportMode, ImportOutcome, RecordWatchProgress, UpsertWatchlistEntry, Watchlist, WatchlistEntry,
+};
 
 /// Allows the Library folder through the asset protocol, so the player can
 /// load a Library item's file in the main window. The scope matches real
@@ -334,6 +338,73 @@ fn save_playback_position(
     positions.save(key, older, seconds, duration)
 }
 
+#[tauri::command]
+fn list_watchlist(watchlist: tauri::State<'_, Watchlist>) -> Vec<WatchlistEntry> {
+    watchlist.list()
+}
+
+#[tauri::command]
+fn get_watchlist_entry(
+    watchlist: tauri::State<'_, Watchlist>,
+    stable_id: Option<u64>,
+    anime_id: Option<String>,
+    title: String,
+) -> Option<WatchlistEntry> {
+    watchlist.get(stable_id, anime_id.as_deref(), &title)
+}
+
+#[tauri::command]
+fn upsert_watchlist_entry(
+    app: tauri::AppHandle,
+    watchlist: tauri::State<'_, Watchlist>,
+    entry: UpsertWatchlistEntry,
+) -> Result<WatchlistEntry, String> {
+    let saved = watchlist.upsert(entry)?;
+    let _ = app.emit(watchlist::EVENT, watchlist.list());
+    Ok(saved)
+}
+
+#[tauri::command]
+fn remove_watchlist_entry(
+    app: tauri::AppHandle,
+    watchlist: tauri::State<'_, Watchlist>,
+    key: String,
+) -> Result<bool, String> {
+    let removed = watchlist.remove(&key)?;
+    if removed {
+        let _ = app.emit(watchlist::EVENT, watchlist.list());
+    }
+    Ok(removed)
+}
+
+#[tauri::command]
+fn record_watch_progress(
+    app: tauri::AppHandle,
+    watchlist: tauri::State<'_, Watchlist>,
+    progress: RecordWatchProgress,
+) -> Result<WatchlistEntry, String> {
+    let saved = watchlist.record_progress(progress)?;
+    let _ = app.emit(watchlist::EVENT, watchlist.list());
+    Ok(saved)
+}
+
+#[tauri::command]
+fn export_watchlist(watchlist: tauri::State<'_, Watchlist>) -> Result<String, String> {
+    watchlist.export_json()
+}
+
+#[tauri::command]
+fn import_watchlist(
+    app: tauri::AppHandle,
+    watchlist: tauri::State<'_, Watchlist>,
+    json: String,
+    mode: ImportMode,
+) -> Result<ImportOutcome, String> {
+    let outcome = watchlist.import_json(&json, mode)?;
+    let _ = app.emit(watchlist::EVENT, watchlist.list());
+    Ok(outcome)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -375,6 +446,9 @@ pub fn run() {
             app.manage(Library::open(app_data_dir.join(library::INDEX_FILE)));
             app.manage(Positions::open(
                 app_data_dir.join(positions::POSITIONS_FILE),
+            ));
+            app.manage(Watchlist::open(
+                app_data_dir.join(watchlist::WATCHLIST_FILE),
             ));
             app.manage(tauri::async_runtime::block_on(Relay::start())?);
 
@@ -485,7 +559,14 @@ pub fn run() {
             open_externally,
             playback_position,
             save_playback_position,
-            stream_episode
+            stream_episode,
+            list_watchlist,
+            get_watchlist_entry,
+            upsert_watchlist_entry,
+            remove_watchlist_entry,
+            record_watch_progress,
+            export_watchlist,
+            import_watchlist
         ])
         .run(tauri::generate_context!())
         .expect("error while running pahe");

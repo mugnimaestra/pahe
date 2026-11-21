@@ -4,11 +4,13 @@ import LibraryView from "./views/LibraryView";
 import QueueView from "./views/QueueView";
 import SearchView from "./views/SearchView";
 import SettingsView from "./views/SettingsView";
+import WatchlistView from "./views/WatchlistView";
 import "./App.css";
 
 const VIEWS = [
   { id: "search", label: "Search" },
   { id: "browse", label: "Browse" },
+  { id: "watchlist", label: "Watchlist" },
   { id: "library", label: "Library" },
   { id: "queue", label: "Queue" },
   { id: "settings", label: "Settings" },
@@ -42,6 +44,8 @@ export default function App() {
           <SearchView />
         ) : view === "browse" ? (
           <BrowseView />
+        ) : view === "watchlist" ? (
+          <WatchlistView />
         ) : view === "library" ? (
           <LibraryView />
         ) : view === "queue" ? (
